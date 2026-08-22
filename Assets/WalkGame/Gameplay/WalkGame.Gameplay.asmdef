@@ -1,0 +1,17 @@
+{
+    "name": "WalkGame.Gameplay",
+    "rootNamespace": "WalkGame.Gameplay",
+    "references": [
+        "WalkGame.Core",
+        "WalkGame.Building"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": true
+}

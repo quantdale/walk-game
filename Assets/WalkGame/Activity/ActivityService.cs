@@ -1,0 +1,162 @@
+using System;
+using WalkGame.Core;
+
+namespace WalkGame.Activity
+{
+    /// <summary>
+    /// Normalization pipeline host (TECHNICAL_ARCHITECTURE 9):
+    /// provider data -> dedup -> trust -> reward -> VitalityLedger credit,
+    /// then sync cursor advances together with the credit so a crash between
+    /// the two cannot duplicate rewards (AGENT_EXECUTION_GUIDE 12).
+    /// Persistence of the mutated profile happens in the same save cycle.
+    /// </summary>
+    public sealed class ActivityService
+    {
+        private readonly PlayerProfile _profile;
+        private readonly VitalityLedger _ledger;
+        private readonly TrustEvaluator _trust;
+        private readonly RewardCalculator _rewards;
+        private readonly DomainEvents _events;
+        private readonly Log _log;
+
+        public ActivityService(
+            PlayerProfile profile,
+            VitalityLedger ledger,
+            TrustEvaluator trust,
+            RewardCalculator rewards,
+            DomainEvents events,
+            Log log)
+        {
+            _profile = profile ?? throw new ArgumentNullException(nameof(profile));
+            _ledger = ledger ?? throw new ArgumentNullException(nameof(ledger));
+            _trust = trust ?? throw new ArgumentNullException(nameof(trust));
+            _rewards = rewards ?? throw new ArgumentNullException(nameof(rewards));
+            _events = events ?? throw new ArgumentNullException(nameof(events));
+            _log = log ?? Log.Disabled;
+        }
+
+        /// <summary>
+        /// Processes one passive provider snapshot. Passive movement earns base Vitality
+        /// only - never speed/route bonuses (ACTIVITY_REWARD_SYSTEM 4). Returns accepted steps.
+        /// </summary>
+        public long ProcessPassiveSnapshot(ActivitySnapshot snapshot)
+        {
+            if (snapshot == null)
+            {
+                return 0;
+            }
+
+            string dedupKey = snapshot.IntervalDedupKey();
+            if (!_profile.activityState.creditedIntervals.TryMarkCredited(dedupKey))
+            {
+                _log.Debug($"Passive interval already credited: {dedupKey}");
+                AdvanceCursor(snapshot);
+                return 0;
+            }
+
+            long acceptedSteps = Math.Max(0, snapshot.stepCount);
+            if (acceptedSteps > 0)
+            {
+                _ledger.Credit(VitalityCredit.Steps(_rewards.BaseVitality(acceptedSteps)));
+                _profile.lifetimeAcceptedSteps += acceptedSteps;
+            }
+
+            if (snapshot.estimatedDistanceMeters.HasValue && snapshot.estimatedDistanceMeters.Value > 0)
+            {
+                _profile.lifetimeVerifiedDistanceMeters += snapshot.estimatedDistanceMeters.Value;
+            }
+
+            AdvanceCursor(snapshot);
+            CheckStepMilestones();
+            return acceptedSteps;
+        }
+
+        /// <summary>
+        /// Processes a completed Expedition. Base steps always count; optional bonuses are
+        /// gated by trust and capped. Low trust is communicated neutrally by UI, not punished.
+        /// </summary>
+        public ActivitySessionResult ProcessSessionResult(ActivitySessionResult result, bool growthEligible)
+        {
+            if (result == null)
+            {
+                return null;
+            }
+
+            long acceptedSteps = Math.Max(0, result.acceptedSteps);
+            if (acceptedSteps > 0)
+            {
+                _ledger.Credit(VitalityCredit.Steps(_rewards.BaseVitality(acceptedSteps)));
+                _profile.lifetimeAcceptedSteps += acceptedSteps;
+            }
+
+            if (result.verifiedDistanceMeters > 0)
+            {
+                _profile.lifetimeVerifiedDistanceMeters += result.verifiedDistanceMeters;
+            }
+
+            var breakdown = _rewards.ComputeSessionBreakdown(
+                acceptedSteps,
+                result.verifiedDistanceMeters,
+                result.verifiedMovingSeconds,
+                result.cadenceConsistency,
+                result.trustScore,
+                classifiedSustainedRun: _rewards.ClassifySustainedRun(result.verifiedDistanceMeters, result.verifiedMovingSeconds),
+                growthEligible: growthEligible);
+
+            result.bonusBreakdown = breakdown;
+
+            if (_profile.lifetimeAcceptedSteps > 0 && breakdown.totalBonus > 0)
+            {
+                CreditBreakdown(result.sessionId, breakdown);
+            }
+
+            // Session completed; clear active session state only after crediting succeeded.
+            _profile.activityState.activeSession = null;
+            CheckStepMilestones();
+            return result;
+        }
+
+        private void CreditBreakdown(string sessionId, ActivityBonusBreakdown breakdown)
+        {
+            CreditPart(breakdown.explorerBonus, WellKnownIds.ReasonCodes.ExplorerBonus, sessionId);
+            CreditPart(breakdown.enduranceBonus, WellKnownIds.ReasonCodes.EnduranceBonus, sessionId);
+            CreditPart(breakdown.rhythmBonus, WellKnownIds.ReasonCodes.RhythmBonus, sessionId);
+            CreditPart(breakdown.tempoBonus, WellKnownIds.ReasonCodes.TempoBonus, sessionId);
+            CreditPart(breakdown.growthBonus, WellKnownIds.ReasonCodes.GrowthBonus, sessionId);
+
+            if (breakdown.capped)
+            {
+                _log.Info("Session bonus capped by policy.");
+            }
+        }
+
+        private void CreditPart(long amount, string reasonCode, string relatedEntityId)
+        {
+            if (amount <= 0)
+            {
+                return;
+            }
+
+            _ledger.Credit(new VitalityCredit { amount = amount, reasonCode = reasonCode, relatedEntityId = relatedEntityId });
+        }
+
+        private void AdvanceCursor(ActivitySnapshot snapshot)
+        {
+            if (snapshot.intervalEndUtc > (_profile.activityState.lastSuccessfulSyncUtc ?? DateTime.MinValue))
+            {
+                _profile.activityState.lastSuccessfulSyncUtc = snapshot.intervalEndUtc;
+            }
+        }
+
+        private void CheckStepMilestones()
+        {
+            MilestonesPending?.Invoke(_profile);
+        }
+
+        /// <summary>
+        /// Hook invoked whenever lifetime steps change; the milestone service subscribes
+        /// rather than ActivityService depending on it directly.
+        /// </summary>
+        public event Action<PlayerProfile> MilestonesPending;
+    }
+}

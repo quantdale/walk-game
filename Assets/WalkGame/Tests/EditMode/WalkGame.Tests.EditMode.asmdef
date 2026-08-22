@@ -1,0 +1,29 @@
+{
+    "name": "WalkGame.Tests.EditMode",
+    "rootNamespace": "WalkGame.Tests",
+    "references": [
+        "WalkGame.Core",
+        "WalkGame.Building",
+        "WalkGame.Gameplay",
+        "WalkGame.Activity",
+        "WalkGame.Persistence",
+        "WalkGame.Content",
+        "UnityEngine.TestRunner",
+        "UnityEditor.TestRunner"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "nunit.framework.dll"
+    ],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "UNITY_INCLUDE_TESTS"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": true
+}

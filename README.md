@@ -4,7 +4,30 @@ A mobile restoration-builder where **real-world movement restores and advances a
 
 The player begins in gray, ruined regions. Walking generates **Vitality**, which is spent to restore ecosystems, repair buildings, rebuild settlements, and eventually advance the world beyond its former civilization. Restored buildings can be rearranged in a bird's-eye builder view, and the player can enter the same region in third-person Explore mode to walk through what they rebuilt.
 
-This repository is currently **documentation-first / pre-implementation**. The documentation below is the development specification for coding agents and contributors.
+This repository now contains a **complete vertical-slice implementation of the Ashfall
+Basin region** (Phases 0-6 systems, content-as-code) with 62 passing domain tests. See
+[`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) for the phase-by-phase
+state and what still requires an editor or physical devices.
+
+## Quick start
+
+**Verify the domain (no Unity required):**
+
+```bash
+dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj
+```
+
+The harness compiles the exact same engine-free sources as the Unity assemblies
+([ADR 0001](docs/adr/0001-standalone-verification-harness.md)).
+
+**Open in Unity (first time):**
+
+1. Open the project in Unity 6.3 LTS (Hub resolves `ProjectSettings/ProjectVersion.txt`).
+2. Wait for import/compile.
+3. Run `WalkGame > Setup > Configure URP and Input System`, then
+   `WalkGame > Setup > Apply Product Identity` once.
+4. Run `WalkGame > Validate Content IDs` to sanity-check authored content.
+5. Open `Assets/WalkGame/Core/Bootstrap.unity` and press Play.
 
 ## Start here
 
@@ -62,6 +85,10 @@ The current plan intentionally commits to these constraints:
 
 ## Current roadmap target
 
-Begin at **Phase 0 — Foundation** in [`docs/ROADMAP.md`](docs/ROADMAP.md).
+Phases 0-6 are implemented at vertical-slice level (one region, content-as-code, gray-box
+visuals) and verified by the domain test suite; native providers await on-device
+validation. Next gates, in order: first editor open + Play validation (Phase 0
+acceptance), physical Android/iOS device passes for Phase 4/7 acceptance criteria.
 
-The first implementation should bootstrap the Unity project and architecture. Do not attempt to implement the entire game in a single change.
+Architecture decisions made during implementation are recorded under
+[`docs/adr/`](docs/adr).

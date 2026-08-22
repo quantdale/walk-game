@@ -1,0 +1,24 @@
+{
+    "name": "WalkGame.EditorTools",
+    "rootNamespace": "WalkGame.EditorTools",
+    "references": [
+        "WalkGame.Core",
+        "WalkGame.Building",
+        "WalkGame.Gameplay",
+        "WalkGame.Activity",
+        "WalkGame.Persistence",
+        "WalkGame.Content",
+        "Unity.RenderPipelines.Universal.Runtime"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

@@ -1,0 +1,25 @@
+{
+    "name": "WalkGame.App",
+    "rootNamespace": "WalkGame.App",
+    "references": [
+        "WalkGame.Core",
+        "WalkGame.Building",
+        "WalkGame.Gameplay",
+        "WalkGame.Activity",
+        "WalkGame.Persistence",
+        "WalkGame.Content",
+        "WalkGame.World",
+        "WalkGame.UI",
+        "WalkGame.Platform.Android",
+        "WalkGame.Platform.iOS"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

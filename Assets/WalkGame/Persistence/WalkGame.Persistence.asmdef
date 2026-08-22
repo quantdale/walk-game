@@ -1,0 +1,17 @@
+{
+    "name": "WalkGame.Persistence",
+    "rootNamespace": "WalkGame.Persistence",
+    "references": [
+        "WalkGame.Core",
+        "Newtonsoft.Json"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": true
+}

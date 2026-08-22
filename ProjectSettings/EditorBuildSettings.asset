@@ -1,0 +1,13 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1045 &1
+EditorBuildSettings:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Scenes:
+  - enabled: 1
+    path: Assets/WalkGame/Core/Bootstrap.unity
+    guid: c1a0b5e2d94f4c6f8b7d3a910e5f2001
+  - enabled: 0
+    path: Assets/WalkGame/Content/Regions/AshfallBasin.unity
+    guid: c1a0b5e2d94f4c6f8b7d3a910e5f2002

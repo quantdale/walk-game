@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Walk Game Android manifest additions.
+  ACTIVITY_RECOGNITION is required for TYPE_STEP_COUNTER on Android 10+ (API 29+).
+  Requested contextually at runtime when the player enables movement rewards;
+  the manifest entry only declares eligibility (MOBILE_ACTIVITY_INTEGRATION 15).
+  Location permissions are intentionally absent: passive step earning must never
+  require GPS, and Expedition location support arrives in Phase 4C as optional.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+          xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+
+    <uses-feature android:name="android.hardware.sensor.stepcounter"
+                  android:required="false" />
+
+</manifest>
