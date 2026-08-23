@@ -407,6 +407,31 @@ namespace WalkGame.App
             }
 
             var statuses = host.Restoration.GetStatuses();
+
+            // Region-finale communication (M8 section 19): once every project is done,
+            // say so plainly instead of pointing at locked work that does not exist.
+            // Post-region content is intentionally out of scope - communicate that
+            // cleanly rather than leaving a dead end.
+            var allProjects = host.Catalog.GetProjectsForRegion(host.Profile.worldState.currentRegionId);
+            if (allProjects.Count > 0)
+            {
+                bool allComplete = true;
+                foreach (var project in allProjects)
+                {
+                    if (!host.Profile.worldState.GetOrCreateRegionState(host.Profile.worldState.currentRegionId)
+                        .completedProjectIds.Contains(project.projectId))
+                    {
+                        allComplete = false;
+                        break;
+                    }
+                }
+
+                if (allComplete)
+                {
+                    return "Ashfall Basin is fully restored and the transit gate stands open. New regions will arrive in a future expedition - keep walking to stay strong.";
+                }
+            }
+
             foreach (var status in statuses)
             {
                 if (status.project == null || status.failure == RestorationFailure.AlreadyCompleted)

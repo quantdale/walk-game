@@ -307,6 +307,12 @@ Implemented policy (campaign):
   jumps past the session end so later passive windows cannot re-read those steps.
 - Dedup stores serialize through the save pipeline (`entries` field + post-load rebuild);
   losing them would silently re-open already-paid windows after every restart.
+- Interrupted sessions (M8): provider sessions never survive process death, but the
+  domain suppression marker is persisted. A marker observed at composition is stale by
+  definition; `ActivityService.RecoverInterruptedSession()` clears it at boot. Recovery
+  credits nothing itself - movement made while the process was dead re-reads from the
+  provider cursor through the normal passive stream - so a mid-Expedition kill costs
+  the player neither lost steps nor double payment.
 
 ## 13. Clock and timezone handling
 

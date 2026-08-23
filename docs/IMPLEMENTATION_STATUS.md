@@ -12,26 +12,34 @@ Evidence tiers:
 - **DEVICE** — requires physical/emulated mobile hardware.
 - **UNVERIFIED** — claimed by no evidence yet.
 
-Last updated: 2026-08-23 (Ashfall Basin player-facing development campaign)
+Last updated: 2026-08-23 (M8 device-ready certification & release hardening campaign)
 
 ## Verification status
 
-- Domain test suite: **113/113 passing (AUTOMATED)** via
+- Domain test suite: **124/124 passing (AUTOMATED)** via
   `dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj`
   (`scripts/verify-domain.ps1`; also runs in CI on every push/PR to `main`).
-- CI domain gate: configured (`.github/workflows/domain-tests.yml`) — **AUTOMATED**.
+- CI domain gate: configured (`.github/workflows/domain-tests.yml`) now including the
+  release-hygiene/privacy audit — **AUTOMATED**.
 - Unity `6000.3.4f1` is installed at `C:\UnityEditors\6000.3.4f1\Editor`, its executable
   reports the pinned version, and `Data\Resources\PackageManager\Server\UnityPackageManager.exe`
-  is present. Batch setup and the committed EditMode wrapper still terminate at the
-  licensing gate (wrapper exit 127; Unity licensing log reports no ULF, no token, and
-  zero entitlement groups), before project compilation. Unity compile, EditMode, and
-  PlayMode therefore remain **UNVERIFIED**.
-- Android Build Support is not present in the editor (`AndroidPlayer` is absent), and no
-  licensed editor build could run.
-  Android build/install/launch and native lifecycle evidence remain **UNVERIFIED**.
+  is present. M8 re-investigation from scratch confirmed the licensing gate is account-level:
+  Unity Hub 3.21.0 (MSIX) runs but holds **zero logged-in accounts** (`accounts.db` empty), the
+  licensing client reports "Token not found in cache" with 0 entitlement groups and no ULF,
+  and every editor entitlement resolves to `granted: False`. No offline activation path exists
+  without user credentials; fabricating or bypassing licensing is prohibited. Unity compile,
+  EditMode, and PlayMode therefore remain **UNVERIFIED** (reproducible gate: sign into Hub,
+  activate a license, run `scripts/setup-unity-project.ps1`, `scripts/verify-unity-editmode.ps1`,
+  `scripts/verify-unity-playmode.ps1`).
+- Android Build Support remains absent (`AndroidPlayer` missing; only Windows Standalone is
+  installed). A prior Hub module-install attempt is recorded as paused with status
+  `install-queued`, `ELEVATION_CANCELLED`; this session cannot elevate. The committed build
+  entry point now certifies the release-shaped backend (IL2CPP + ARM64, minSdk 26, targetSdk 35).
+  Android build/install/launch and native lifecycle evidence remain **UNVERIFIED**;
+  `scripts/verify-android-smoke.ps1` is committed and ready for the first emulator/device.
   iOS Xcode generation/build remains **UNVERIFIED** (no macOS/Xcode).
-- Static bring-up audit of assemblies/GUIDs/scenes/packages: **AUTOMATED**; 91 asset files
-  and 91 `.meta` files pass the audit, with zero missing real GUID references. The only unresolved
+- Static bring-up audit of assemblies/GUIDs/scenes/packages: **AUTOMATED**; 94 asset files
+  and 94 `.meta` files pass the audit with zero missing real GUID references. The only unresolved
   scene GUID is Unity's built-in zero GUID for the authored light.
 
 ## Phase 0 - Foundation
@@ -149,20 +157,67 @@ been silently dropping them was found and fixed). Regression suites:
 Physical Android/iOS lifecycle, sensor, performance, store, playtest, and post-MVP
 expansion gates remain unverified or intentionally out of scope for this campaign.
 
+## M8 runtime-defect record
+
+Defects discovered by first-import/runtime inspection and fixed this campaign:
+
+1. **Stale Expedition suppression marker** — a process kill mid-Expedition persisted
+   `activeSession`, which suppressed every future passive snapshot forever (no recovery path
+   existed). Fixed with boot-time `ActivityService.RecoverInterruptedSession()`; recovery
+   credits nothing itself and movement made during the interruption re-reads from the provider
+   cursor exactly once. Covered by `InterruptedSessionRecoveryTests` + PlayMode boot gate.
+2. **Missing uGUI EventSystem** — all UI was composed programmatically but nothing ever created
+   an EventSystem, so every button and the Explore joystick rendered yet were inert. Fixed via
+   `UiRuntime.EnsureEventSystem` during UI composition; PlayMode regression gate added.
+3. **Literal `\n` in project panel text** — restoration rows/details displayed raw backslash-n
+   instead of line breaks. Fixed strings in `ProjectPanelController`.
+4. **Event-subscription leaks** — `UiComposer`/`AppFlowController` subscribed to domain events
+   without ever unsubscribing; stale handlers would fire into destroyed UI across scene reloads.
+   Both now detach every subscription on destroy.
+5. **Silent feedback layer** — audio cues were wired but no clips existed anywhere, so settings
+   showed values with no audible effect. Procedural stand-in cues + honest ambient loop now
+   honor master/music/effects/haptics until final production audio lands.
+6. **Dead-end finale copy** — completing all 15 projects still pointed players at "the next
+   locked project". Full completion now communicates the milestone cleanly (§19).
+
 ## Environment record for this campaign
 
-- Start SHA `c8fe24d792ea8f2eab7d80b62d96354a62f81727`, clean tree, synced with
-  `origin/main` at campaign start. Player-facing checkpoint `11735af` is committed and
-  pushed to `main`.
-- Available tooling: .NET SDK 8.0.424; Unity Hub 3.21.0; exact Unity editor
+- Start SHA `bc3fd7f9831ebacda936090266abe5d73ebd0d45` (M8 campaign), clean tree, synced
+  with `origin/main`. Checkpoints `3a0244a` (runtime bring-up fixes) and `98776ac`
+  (Android/smoke/hygiene gates) are committed to `main`.
+- Available tooling: .NET SDK 8.0.424; Unity Hub 3.21.0 (MSIX, running); exact Unity editor
   `6000.3.4f1`; JDK 17.0.20; Android SDK platforms 36/37.0, build-tools 35/36,
-  NDK 27.0/27.1; `adb` 37.0.1; API-36 emulator `emulator-5554`.
-- Licensing/installation: no Unity access token or entitlement was available. A manual
-  activation file was generated for handoff and removed from the repository; activation
-  requires a user account/manual step outside this environment. Package Manager server
-  integrity is now confirmed, but the editor still lacks a valid license and Android player
-  module, so Unity compilation or APK generation cannot be certified here.
-- Not available: macOS/Xcode, physical iOS/Android hardware, and an Android emulator
-  exposing a genuine step-counter sensor.
+  NDK 27.0/27.1; `adb` 37.0.1; API-36 emulator `emulator-5554` (no TYPE_STEP_COUNTER).
+- Licensing/installation (M8 re-investigation): the licensing client is healthy and online
+  but no Unity account session exists on the machine (`accounts.db`: zero accounts; client
+  log: "Token not found in cache"; all entitlements `granted: False`). The prior module
+  install died at UAC elevation (`ELEVATION_CANCELLED`) and this session is not elevated.
+  Activation requires a user account sign-in outside this environment.
+- Not available: macOS/Xcode, physical iOS/Android hardware, an Android emulator exposing a
+  genuine step-counter sensor, and a licensed Unity editor session.
 - Honest consequence: all EDITOR- and DEVICE-tier gates above remain **UNVERIFIED** even
-  where the underlying code was fixed and domain-tested.
+  where the underlying code was fixed and domain-tested. Every blocked gate is reproducible
+  via the scripts named in this document once its specific precondition (license, module,
+  or hardware) is met.
+
+## M8 certification matrix
+
+| Gate | Result | Evidence |
+| --- | --- | --- |
+| Domain suite | PASS | 124/124 (`dotnet test`, this campaign) |
+| Unity static audit | PASS | 94 assets/94 metas, pin + manifest invariants (`verify-unity-static.ps1`) |
+| Release hygiene / privacy audit | PASS | 57 runtime sources, minimal manifest (`verify-release-hygiene.ps1`) |
+| `git diff --check` | PASS | clean output at final gate run |
+| Unity project import | UNVERIFIED | requires licensed editor |
+| Unity compilation | UNVERIFIED | requires licensed editor |
+| EditMode | UNVERIFIED | committed sources compile under the standalone harness; editor run blocked by license |
+| PlayMode | UNVERIFIED | suite extended (EventSystem + boot-recovery gates); editor run blocked by license |
+| Ashfall complete playthrough | PASS | `AshfallTests.DeadWorld_To_TransitGateAlignment_CompletesInDependencyOrder` |
+| Economy pacing replay | PASS | `AshfallEconomyPacingTests` (casual-walker window; idle-only completes nothing) |
+| Exactly-once activity | PASS | `ActivityServiceTests` + `InterruptedSessionRecoveryTests` (incl. save/reload) |
+| Save fault injection | PASS | `SaveLoadTests` (+ producer-prune regression) |
+| Android build | UNVERIFIED | AndroidPlayer module absent; build script release-shaped and ready |
+| Android install/launch/lifecycle smoke | UNVERIFIED | `verify-android-smoke.ps1` committed for first emulator/device |
+| Real step sensor | UNVERIFIED | physical device required |
+| iOS compile/device | UNVERIFIED | no macOS/Xcode |
+| Performance measurement | UNVERIFIED | structural measures only; profiling needs hardware |

@@ -5,7 +5,7 @@ A mobile restoration-builder where **real-world movement restores and advances a
 The player begins in gray, ruined regions. Walking generates **Vitality**, which is spent to restore ecosystems, repair buildings, rebuild settlements, and eventually advance the world beyond its former civilization. Restored buildings can be rearranged in a bird's-eye builder view, and the player can enter the same region in third-person Explore mode to walk through what they rebuilt.
 
 This repository now contains a **player-facing vertical slice of the Ashfall Basin region**
-(Phases 0-6 systems, content-as-code) with 113 passing domain tests, a procedural basin
+(Phases 0-6 systems, content-as-code) with 124 passing domain tests, a procedural basin
 environment, responsive Builder/Explore UI, onboarding, NPC/lore hooks, producer cards,
 and player-facing Expeditions. See
 [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) for the phase-by-phase

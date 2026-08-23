@@ -14,12 +14,15 @@ Testing must therefore prioritize:
 
 ## 1A. Current campaign evidence
 
-As of 2026-08-23, `dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj`
-passes **113/113** and `scripts/verify-unity-static.ps1` passes the pinned Unity version,
-asset metadata, package invariants, and Bootstrap scene checks. The new player-facing
-state surfaces are covered by `PlayerExperienceTests`, while the existing activity,
-placement, save/recovery, production, permission, and full Ashfall playthrough suites
-remain part of the same automated gate.
+As of 2026-08-23 (M8 campaign), `dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj`
+passes **124/124** and `scripts/verify-unity-static.ps1` passes the pinned Unity version,
+asset metadata, package invariants, and Bootstrap scene checks. `scripts/verify-release-hygiene.ps1`
+adds a CI-runnable privacy/release audit (no GPS/save-path logging, Log-wrapper enforcement,
+minimal manifest). The new player-facing state surfaces are covered by `PlayerExperienceTests`,
+the exactly-once boundary by `ActivityServiceTests` + the M8 `InterruptedSessionRecoveryTests`
+(process-death recovery, late deliveries, save/reload), and pacing coherence by
+`AshfallEconomyPacingTests`. The existing activity, placement, save/recovery, production,
+permission, and full Ashfall playthrough suites remain part of the same automated gate.
 
 The procedural environment kit uses shared materials, property blocks for state tinting,
 static geometry after construction, reused UI rows, and `Physics.OverlapSphereNonAlloc`
