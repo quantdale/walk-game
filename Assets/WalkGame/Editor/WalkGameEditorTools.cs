@@ -219,6 +219,13 @@ namespace WalkGame.EditorTools
             PlayerSettings.Android.minimumSdkVersion = AndroidSdkVersions.AndroidApiLevel26;
             PlayerSettings.Android.targetSdkVersion = AndroidSdkVersions.AndroidApiLevel35;
             PlayerSettings.Android.targetArchitectures = AndroidArchitecture.ARM64;
+
+            // Certify the release-shaped backend, not just the fast iteration one:
+            // Google Play requires IL2CPP + ARM64, and Mono-only certification would
+            // hide IL2CPP stripping/marshalling defects in the JNI bridge.
+            PlayerSettings.SetScriptingBackend(BuildTargetGroup.Android, ScriptingImplementation.IL2CPP);
+            PlayerSettings.incrementalGc = true;
+
             EditorUserBuildSettings.development = true;
             EditorUserBuildSettings.allowDebugging = true;
             EditorUserBuildSettings.connectProfiler = false;

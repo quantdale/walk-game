@@ -297,11 +297,12 @@ namespace WalkGame.App
         {
             public void Log(LogLevel level, string message)
             {
+                // hygiene-allow: this sink IS the Log wrapper's engine output adapter.
                 switch (level)
                 {
-                    case LogLevel.Warning: Debug.LogWarning(message); break;
-                    case LogLevel.Error: Debug.LogError(message); break;
-                    default: Debug.Log(message); break;
+                    case LogLevel.Warning: Debug.LogWarning(message); break; // hygiene-allow: sink
+                    case LogLevel.Error: Debug.LogError(message); break; // hygiene-allow: sink
+                    default: Debug.Log(message); break; // hygiene-allow: sink
                 }
             }
         }

@@ -35,7 +35,7 @@ namespace WalkGame.App
             var host = GameHost.Current;
             if (host == null)
             {
-                Debug.LogError("AppFlowController requires GameHost; add GameHost to the bootstrap scene.");
+                Debug.LogError("AppFlowController requires GameHost; add GameHost to the bootstrap scene."); // hygiene-allow: no host/log exists yet
                 enabled = false;
                 return;
             }

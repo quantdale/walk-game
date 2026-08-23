@@ -8,18 +8,25 @@
 | `verify-unity-editmode.ps1` | Unity 6000.3.x editor, `UNITY_EDITOR_PATH` env var | Batch-mode EditMode test run; writes `TestResults/editmode-results.xml` + full log. Never commit machine paths; set the variable per machine. |
 | `verify-unity-playmode.ps1` | Licensed Unity 6000.3.4f1 editor, `UNITY_EDITOR_PATH` env var | Batch-mode Bootstrap/runtime certification; writes `TestResults/playmode-results.xml` + full log. |
 | `setup-unity-project.ps1` | Unity 6000.3.4f1 editor, `UNITY_EDITOR_PATH` env var | Idempotent batch-mode URP/Input/product/content setup. |
-| `build-android-development.ps1` | Unity 6000.3.4f1 + Android Build Support, `UNITY_EDITOR_PATH` env var | Builds `Builds/Android/WalkGame-dev.apk` with the committed Bootstrap scene and Android development settings. |
+| `build-android-development.ps1` | Unity 6000.3.4f1 + Android Build Support, `UNITY_EDITOR_PATH` env var | Builds `Builds/Android/WalkGame-dev.apk` with the committed Bootstrap scene, Android development settings, IL2CPP + ARM64. |
+| `verify-android-smoke.ps1` | adb + device/emulator + built APK | Installs the APK, clears data, launches, exercises background/resume, rotation attempt, force-stop/relaunch; fails on fatal logcat conditions. Writes ignored artifacts under `Artifacts/android-smoke/`. Certifies Android lifecycle only - never real step sensors. |
+| `verify-release-hygiene.ps1` | PowerShell 7+ | Static privacy/release audit: no GPS/save-path logging, no direct Debug.Log in runtime code (explicit `hygiene-allow` exceptions only), no hard-coded machine paths/secrets, minimal Android manifest. Runs in CI. |
 
 ## Local gate order before pushing
 
 ```bash
 dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj   # or scripts/verify-domain.ps1
+./scripts/verify-unity-static.ps1
+./scripts/verify-release-hygiene.ps1
+git diff --check
 # with an installed editor:
 #   set UNITY_EDITOR_PATH=...Unity.exe
 #   ./scripts/setup-unity-project.ps1
 #   ./scripts/verify-unity-editmode.ps1
 #   ./scripts/verify-unity-playmode.ps1
 #   ./scripts/build-android-development.ps1
+# with a connected emulator/device:
+#   ./scripts/verify-android-smoke.ps1
 ```
 
 CI (`.github/workflows/domain-tests.yml`) runs the domain suite on every push/PR to

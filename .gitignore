@@ -29,6 +29,9 @@
 # Unity test runner artifacts
 TestResults/
 
+# Device/emulator smoke artifacts (logcat captures, summaries)
+Artifacts/
+
 # Standalone verification harness build output
 verification/**/bin/
 verification/**/obj/

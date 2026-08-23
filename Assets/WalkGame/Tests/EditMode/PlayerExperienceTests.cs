@@ -175,6 +175,26 @@ namespace WalkGame.Tests
             Assert.IsNotNull(report);
         }
 
+        [Test]
+        public void EnsureProducerStates_PrunesUnknownPersistedProducerIds()
+        {
+            // M8 save red-team: hand-edited or partially migrated saves may reference
+            // producers that no longer exist; they must not linger as ghost UI rows.
+            var region = _profile.worldState.GetOrCreateRegionState(AshfallBasinCatalog.RegionId);
+            region.producerStates["producer.ashfall.does_not_exist"] = new ProducerState
+            {
+                producerId = "producer.ashfall.does_not_exist",
+                buildingInstanceId = "building.ashfall.water_station",
+            };
+
+            var production = new ProductionService(_catalog, _profile,
+                new RewardApplier(_profile, _clock, _events, Log.Disabled), _clock, Log.Disabled);
+            production.EnsureProducerStates(AshfallBasinCatalog.RegionId);
+
+            Assert.IsFalse(region.producerStates.ContainsKey("producer.ashfall.does_not_exist"));
+            Assert.GreaterOrEqual(region.producerStates.Count, 4);
+        }
+
         private void LoadRegion()
         {
             var region = _profile.worldState.GetOrCreateRegionState(AshfallBasinCatalog.RegionId);
