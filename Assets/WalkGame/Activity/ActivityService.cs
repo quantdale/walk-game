@@ -107,6 +107,32 @@ namespace WalkGame.Activity
         }
 
         /// <summary>
+        /// True while a persisted Expedition marker exists. A provider session never
+        /// survives process death, so a marker seen at composition is stale by
+        /// definition and would suppress every future passive read forever.
+        /// </summary>
+        public bool HasInterruptedSession => _profile.activityState.activeSession != null;
+
+        /// <summary>
+        /// Clears a stale Expedition marker left by a process kill mid-session
+        /// (M8 red-team). Recovery credits nothing itself: the interrupted session's
+        /// result was never delivered, and movement made during the interruption is
+        /// re-read from the provider cursor through normal passive reconciliation,
+        /// so credit stays exactly-once. Idempotent.
+        /// </summary>
+        public bool RecoverInterruptedSession()
+        {
+            if (_profile.activityState.activeSession == null)
+            {
+                return false;
+            }
+
+            _log.Info("Recovered from an interrupted Expedition; passive movement credit resumes.");
+            _profile.activityState.activeSession = null;
+            return true;
+        }
+
+        /// <summary>
         /// Processes a completed Expedition. Base steps always count; optional bonuses are
         /// gated by trust and capped. Low trust is communicated neutrally by UI, not punished.
         /// Exactly-once policy (campaign S8): a durable per-session identity prevents any

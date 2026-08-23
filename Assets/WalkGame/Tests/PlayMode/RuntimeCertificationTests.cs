@@ -11,6 +11,7 @@ using WalkGame.Building;
 using WalkGame.Content;
 using WalkGame.Core;
 using WalkGame.Gameplay;
+using WalkGame.Persistence;
 using WalkGame.World;
 
 namespace WalkGame.Tests.PlayMode
@@ -203,6 +204,53 @@ namespace WalkGame.Tests.PlayMode
             yield return null;
             Assert.AreEqual(GameMode.BuilderMode, host.Modes.Current);
             Assert.IsTrue(host.Persist());
+        }
+
+        [UnityTest]
+        public IEnumerator Bootstrap_ComposesUiRuntimeWithEventSystem()
+        {
+            yield return LoadBootstrapAndWaitForRig();
+
+            // M8 first-import defect regression: programmatic UI rendered but every
+            // button/joystick was inert because nothing created an EventSystem.
+            Assert.IsNotNull(UnityEngine.EventSystems.EventSystem.current,
+                "Bootstrap composition must provide an EventSystem for uGUI input.");
+        }
+
+        [UnityTest]
+        public IEnumerator StaleExpeditionMarker_FromProcessDeath_RecoversAtBootAndPassiveCreditResumes()
+        {
+            // Persist a profile that died mid-Expedition: the suppression marker is on disk.
+            var clock = new MutableClock(new DateTime(2026, 3, 1, 12, 0, 0, DateTimeKind.Utc));
+            var deadProfile = new PlayerProfile { schemaVersion = SaveSchemaVersions.Current, createdAtUtc = clock.UtcNow };
+            deadProfile.activityState.activeSession = new ActiveSessionState
+            {
+                sessionType = SessionType.Walk,
+                startedAtUtc = clock.UtcNow.AddMinutes(-2),
+            };
+            var repository = new FileSaveRepository(
+                _testSaveDirectory, "walkgame.profile.json",
+                new JsonSaveSerializer(), new SaveMigrator(),
+                Log.Disabled, clock);
+            Assert.AreEqual(SaveLoadResult.Success, repository.Save(deadProfile));
+
+            yield return LoadBootstrapAndWaitForRig();
+
+            var host = GameHost.Current;
+            Assert.IsNull(host.Profile.activityState.activeSession,
+                "boot must recover the stale Expedition marker.");
+
+            var debug = host.Provider as DebugActivityProvider;
+            Assert.IsNotNull(debug);
+            long stepsBefore = host.Profile.lifetimeAcceptedSteps;
+            long vitalityBefore = host.Profile.vitalityBalance;
+            debug.DebugAddSteps(1500);
+            UnityEngine.Object.FindFirstObjectByType<ActivityTicker>().ProcessPassiveNow();
+            yield return null;
+
+            Assert.Greater(host.Profile.lifetimeAcceptedSteps, stepsBefore,
+                "passive movement credit must resume after interrupted-session recovery.");
+            Assert.Greater(host.Profile.vitalityBalance, vitalityBefore);
         }
 
         private IEnumerator LoadBootstrapAndWaitForRig()

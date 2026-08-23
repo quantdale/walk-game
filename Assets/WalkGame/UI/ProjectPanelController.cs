@@ -231,21 +231,21 @@ namespace WalkGame.UI
                     : selected
                         ? new Color(0.25f, 0.25f, 0.21f, 1f)
                         : new Color(1f, 1f, 1f, 0.07f);
-            row.text.text = $"{view.Title}  ·  {view.Category}\\n{view.Description}\\n{view.VitalityCost:N0} Vitality" +
+            row.text.text = $"{view.Title}  ·  {view.Category}\n{view.Description}\n{view.VitalityCost:N0} Vitality" +
                             (view.ResourceCost.Length > 0 ? $"  +  {view.ResourceCost}" : string.Empty) +
-                            $"\\n{LockCopy(view, failure)}";
+                            $"\n{LockCopy(view, failure)}";
             row.restore.interactable = available;
             SetButtonText(row.restore, completed ? "DONE" : available ? (affordable ? "RESTORE" : "NEED") : "LOCKED");
         }
 
         private static string BuildDetails(RestorationProjectView view, RestorationFailure failure)
         {
-            return $"{view.Title}\\n{view.Description}\\n\\n" +
+            return $"{view.Title}\n{view.Description}\n\n" +
                    $"Category: {view.Category}   Cost: {view.VitalityCost:N0} Vitality" +
                    (view.ResourceCost.Length > 0 ? $" + {view.ResourceCost}" : string.Empty) +
-                   $"\\nPrerequisite: {(view.Prerequisites.Length > 0 ? view.Prerequisites : "None")}" +
-                   $"\\nChanges: {view.RewardSummary}" +
-                   $"\\n{LockCopy(view, failure)}";
+                   $"\nPrerequisite: {(view.Prerequisites.Length > 0 ? view.Prerequisites : "None")}" +
+                   $"\nChanges: {view.RewardSummary}" +
+                   $"\n{LockCopy(view, failure)}";
         }
 
         private static string LockCopy(RestorationProjectView view, RestorationFailure failure)

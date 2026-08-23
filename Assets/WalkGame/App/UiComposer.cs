@@ -36,6 +36,10 @@ namespace WalkGame.App
 
             var host = GameHost.Current;
 
+            // uGUI is inert without an EventSystem; programmatic composition must
+            // supply one before any button exists.
+            UiRuntime.EnsureEventSystem(transform);
+
             var feedbackGo = new GameObject("FeedbackController");
             feedbackGo.transform.SetParent(transform, false);
             _feedback = feedbackGo.AddComponent<FeedbackController>();
@@ -146,19 +150,19 @@ namespace WalkGame.App
                     changed: RefreshAll);
             }
 
-            host.Events.Subscribe<VitalityCredited>(_ => RefreshAll());
-            host.Events.Subscribe<VitalitySpent>(_ => RefreshAll());
-            host.Events.Subscribe<ProjectCompleted>(_ => RefreshAll());
-            host.Events.Subscribe<BuildingRestored>(_ => RefreshAll());
-            host.Events.Subscribe<RegionStageChanged>(_ => RefreshAll());
-            host.Events.Subscribe<EnvironmentFlagChanged>(_ => RefreshAll());
-            host.Events.Subscribe<LoreDiscovered>(_ => RefreshAll());
-            host.Events.Subscribe<ProjectCompleted>(_ => _feedback.Play(FeedbackCue.Restoration));
-            host.Events.Subscribe<VitalitySpent>(_ => _feedback.Play(FeedbackCue.Restoration));
-            host.Events.Subscribe<RegionStageChanged>(_ => _feedback.Play(FeedbackCue.Milestone));
-            host.Events.Subscribe<ActivityMilestoneReached>(_ => _feedback.Play(FeedbackCue.Milestone));
-            host.Events.Subscribe<LoreDiscovered>(_ => _feedback.Play(FeedbackCue.Lore));
-            host.Events.Subscribe<ModeChanged>(_ => _feedback.Play(FeedbackCue.ModeSwitch));
+            host.Events.Subscribe<VitalityCredited>(OnVitalityCreditedRefresh);
+            host.Events.Subscribe<VitalitySpent>(OnVitalitySpentRefresh);
+            host.Events.Subscribe<ProjectCompleted>(OnProjectCompleted);
+            host.Events.Subscribe<BuildingRestored>(OnBuildingRestored);
+            host.Events.Subscribe<RegionStageChanged>(OnRegionStageChanged);
+            host.Events.Subscribe<EnvironmentFlagChanged>(OnEnvironmentFlagChanged);
+            host.Events.Subscribe<LoreDiscovered>(OnLoreDiscovered);
+            host.Events.Subscribe<ProjectCompleted>(OnProjectCompletedRestorationCue);
+            host.Events.Subscribe<VitalitySpent>(OnVitalitySpentRestorationCue);
+            host.Events.Subscribe<RegionStageChanged>(OnRegionStageMilestoneCue);
+            host.Events.Subscribe<ActivityMilestoneReached>(OnActivityMilestoneCue);
+            host.Events.Subscribe<LoreDiscovered>(OnLoreDiscoveredCue);
+            host.Events.Subscribe<ModeChanged>(OnModeChangedCue);
             _flow.PlacementFeedback += OnPlacementFeedback;
 
             if (_ticker != null)
@@ -170,6 +174,61 @@ namespace WalkGame.App
             _expedition.Changed += RefreshAll;
 
             RefreshAll();
+        }
+
+        // Named handlers so OnDestroy can detach every subscription; the composition
+        // root outlives this component across scene reloads, and a stale handler would
+        // otherwise fire into destroyed UI (M8 lifecycle audit).
+
+        private void OnVitalityCreditedRefresh(VitalityCredited _) => RefreshAll();
+        private void OnVitalitySpentRefresh(VitalitySpent _) => RefreshAll();
+        private void OnProjectCompleted(ProjectCompleted _) => RefreshAll();
+        private void OnBuildingRestored(BuildingRestored _) => RefreshAll();
+        private void OnRegionStageChanged(RegionStageChanged _) => RefreshAll();
+        private void OnEnvironmentFlagChanged(EnvironmentFlagChanged _) => RefreshAll();
+        private void OnLoreDiscovered(LoreDiscovered _) => RefreshAll();
+        private void OnProjectCompletedRestorationCue(ProjectCompleted _) => _feedback.Play(FeedbackCue.Restoration);
+        private void OnVitalitySpentRestorationCue(VitalitySpent _) => _feedback.Play(FeedbackCue.Restoration);
+        private void OnRegionStageMilestoneCue(RegionStageChanged _) => _feedback.Play(FeedbackCue.Milestone);
+        private void OnActivityMilestoneCue(ActivityMilestoneReached _) => _feedback.Play(FeedbackCue.Milestone);
+        private void OnLoreDiscoveredCue(LoreDiscovered _) => _feedback.Play(FeedbackCue.Lore);
+        private void OnModeChangedCue(ModeChanged _) => _feedback.Play(FeedbackCue.ModeSwitch);
+
+        private void OnDestroy()
+        {
+            var host = GameHost.Current;
+            if (host?.Events != null)
+            {
+                host.Events.Unsubscribe<VitalityCredited>(OnVitalityCreditedRefresh);
+                host.Events.Unsubscribe<VitalitySpent>(OnVitalitySpentRefresh);
+                host.Events.Unsubscribe<ProjectCompleted>(OnProjectCompleted);
+                host.Events.Unsubscribe<BuildingRestored>(OnBuildingRestored);
+                host.Events.Unsubscribe<RegionStageChanged>(OnRegionStageChanged);
+                host.Events.Unsubscribe<EnvironmentFlagChanged>(OnEnvironmentFlagChanged);
+                host.Events.Unsubscribe<LoreDiscovered>(OnLoreDiscovered);
+                host.Events.Unsubscribe<ProjectCompleted>(OnProjectCompletedRestorationCue);
+                host.Events.Unsubscribe<VitalitySpent>(OnVitalitySpentRestorationCue);
+                host.Events.Unsubscribe<RegionStageChanged>(OnRegionStageMilestoneCue);
+                host.Events.Unsubscribe<ActivityMilestoneReached>(OnActivityMilestoneCue);
+                host.Events.Unsubscribe<LoreDiscovered>(OnLoreDiscoveredCue);
+                host.Events.Unsubscribe<ModeChanged>(OnModeChangedCue);
+            }
+
+            if (_flow != null)
+            {
+                _flow.PlacementFeedback -= OnPlacementFeedback;
+                _flow.PresentationChanged -= RefreshAll;
+            }
+
+            if (_ticker != null)
+            {
+                _ticker.ActivityProcessed -= RefreshAll;
+            }
+
+            if (_expedition != null)
+            {
+                _expedition.Changed -= RefreshAll;
+            }
         }
 
         private void ToggleMode()

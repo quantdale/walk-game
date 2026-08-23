@@ -362,6 +362,13 @@ namespace WalkGame.App
             return text.Replace('_', ' ').Replace('-', ' ');
         }
 
+        private void OnDestroy()
+        {
+            // The composition root outlives this controller; a stale ModeChanged handler
+            // would otherwise fire into a destroyed rig after a scene reload (M8 audit).
+            GameHost.Current?.Events?.Unsubscribe<ModeChanged>(OnModeChanged);
+        }
+
         private void BuildRuntimeRig()
         {
             if (_rigReady)

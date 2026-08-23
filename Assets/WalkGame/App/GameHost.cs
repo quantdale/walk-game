@@ -120,6 +120,15 @@ namespace WalkGame.App
             var milestones = new StepMilestoneService(Catalog, Profile, Ledger, Events);
             Activity.MilestonesPending += _ => milestones.CheckAndAward();
 
+            // A process kill mid-Expedition leaves a persisted suppression marker;
+            // recover it here so passive credit cannot stay blocked forever (M8
+            // lifecycle red-team). Movement made during the interruption is re-read
+            // from the provider cursor through the normal passive stream.
+            if (Activity.RecoverInterruptedSession())
+            {
+                Log.Warning("Stale Expedition marker recovered at boot; passive movement credit resumed.");
+            }
+
             Provider = CreateProvider();
 
             Modes = new ModeStateMachine(Events, Log);
