@@ -33,6 +33,13 @@ Use for Unity integration:
 - Builder ↔ Explore transitions.
 - region loading/unloading.
 
+`Assets/WalkGame/Tests/PlayMode/RuntimeCertificationTests.cs` is the focused vertical-slice
+certification layer. It covers Bootstrap composition, Ashfall Basin hydration, the
+Builder → save → reload → Explore canonical-transform scenario, debug activity through
+Vitality/restoration, fake-clock production collection, and permission denial without
+blocking mode transitions. It intentionally complements rather than duplicates the
+engine-free domain suite.
+
 ### Native/device
 Use for:
 - permissions.

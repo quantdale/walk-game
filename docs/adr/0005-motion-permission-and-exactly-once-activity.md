@@ -58,6 +58,9 @@ the bring-up/hardening audit (campaign S4-S8):
   gameplay paths. The iOS bridge delivers historical queries through a marshalled
   callback (`WG_QueryPedometerAsync` + request ids); timed-out requests drop late native
   answers as stale, and failed queries leave the durable cursor untouched.
+- A native bridge/packaging failure uses the explicit `UnavailableActivityProvider` and
+  never silently switches a release Android/iOS runtime to the debug movement provider.
+  The debug provider remains an editor/development harness only.
 
 ## Consequences
 

@@ -310,6 +310,11 @@ Use atomic local writes:
 4. Replace current with temp.
 5. Keep at least one last-known-good backup.
 
+The repository uses an `ISaveFileSystem` seam around these operations so interruption,
+write failure, and backup-rotation cases can be tested without changing the production
+algorithm. Save validation receives the trusted `IClock`; future timestamps are reported
+as anomalies and preserved for recovery rather than silently rewritten.
+
 On corruption:
 - Try backup.
 - Never silently reset player world if a backup exists.

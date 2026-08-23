@@ -5,7 +5,7 @@ A mobile restoration-builder where **real-world movement restores and advances a
 The player begins in gray, ruined regions. Walking generates **Vitality**, which is spent to restore ecosystems, repair buildings, rebuild settlements, and eventually advance the world beyond its former civilization. Restored buildings can be rearranged in a bird's-eye builder view, and the player can enter the same region in third-person Explore mode to walk through what they rebuilt.
 
 This repository now contains a **complete vertical-slice implementation of the Ashfall
-Basin region** (Phases 0-6 systems, content-as-code) with 64 passing domain tests. See
+Basin region** (Phases 0-6 systems, content-as-code) with 107 passing domain tests. See
 [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) for the phase-by-phase
 state and what still requires an editor or physical devices.
 
@@ -22,10 +22,10 @@ The harness compiles the exact same engine-free sources as the Unity assemblies
 
 **Open in Unity (first time):**
 
-1. Open the project in Unity 6.3 LTS (Hub resolves `ProjectSettings/ProjectVersion.txt`).
+1. Open the project in Unity `6000.3.4f1` (Hub resolves `ProjectSettings/ProjectVersion.txt`).
 2. Wait for import/compile.
-3. Run `WalkGame > Setup > Configure URP and Input System`, then
-   `WalkGame > Setup > Apply Product Identity` once.
+3. Run `./scripts/setup-unity-project.ps1` in batch mode, or use
+   `WalkGame > Setup > Apply All Project Setup`.
 4. Run `WalkGame > Validate Content IDs` to sanity-check authored content.
 5. Open `Assets/WalkGame/Core/Bootstrap.unity` and press Play.
 
