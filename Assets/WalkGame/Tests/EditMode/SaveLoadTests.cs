@@ -34,7 +34,12 @@ namespace WalkGame.Tests
 
         private FileSaveRepository CreateRepository()
         {
-            return new FileSaveRepository(_directory, "profile.json", _serializer, _migrator, Log.Disabled);
+            return CreateRepository(null, Log.Disabled);
+        }
+
+        private FileSaveRepository CreateRepository(ISaveFileSystem fileSystem, Log log)
+        {
+            return new FileSaveRepository(_directory, "profile.json", _serializer, _migrator, log, _clock, fileSystem);
         }
 
         [Test]
@@ -68,6 +73,27 @@ namespace WalkGame.Tests
                 restored.worldState.regionStates[TestContent.RegionId]
                     .buildingStates[TestContent.PumpInstanceId].lifecycleState);
             Assert.AreEqual(1, restored.schemaVersion);
+            Assert.AreEqual(_clock.UtcNow, restored.lastSavedAtUtc);
+            Assert.AreEqual(DateTimeKind.Utc, restored.lastSavedAtUtc.Kind);
+        }
+
+        [Test]
+        public void SaveReload_NormalizesPersistedTimestampsToUtc()
+        {
+            var profile = new PlayerProfile
+            {
+                // An explicitly unspecified value models a serialized/local-time
+                // boundary; the save contract treats all lifecycle timestamps as UTC.
+                createdAtUtc = new DateTime(2026, 6, 1, 10, 0, 0, DateTimeKind.Unspecified),
+            };
+            var repository = CreateRepository();
+
+            Assert.AreEqual(SaveLoadResult.Success, repository.Save(profile));
+            Assert.IsTrue(repository.TryLoad(out var restored, out var result));
+            Assert.AreEqual(SaveLoadResult.Success, result);
+            Assert.AreEqual(DateTimeKind.Utc, restored.createdAtUtc.Kind);
+            Assert.AreEqual(new DateTime(2026, 6, 1, 10, 0, 0, DateTimeKind.Utc),
+                restored.createdAtUtc);
         }
 
         [Test]
@@ -102,16 +128,43 @@ namespace WalkGame.Tests
         }
 
         [Test]
-        public void TimeReversal_ReloadDoesNotResurrectFutureState()
+        public void FutureTimestamp_IsFlagged_AndDoesNotGrantFutureProduction()
         {
             var profile = BuildPopulatedProfile(out _);
             profile.worldState.regionStates[TestContent.RegionId]
                 .buildingStates[TestContent.PumpInstanceId].restorationCompletedAtUtc =
-                DateTime.UtcNow.AddDays(30); // corrupted/future timestamp
+                _clock.UtcNow.AddDays(30); // corrupted/future timestamp
 
-            SaveValidator.RepairAndValidate(profile, Log.Disabled);
+            var sink = new RecordingLog();
+            var report = SaveValidator.RepairAndValidate(
+                profile,
+                _clock,
+                new Log(sink, LogLevel.Warning));
 
-            // Validator flags rather than trusts far-future state (DATA_MODEL 20).
+            Assert.IsTrue(report.HasAnomalies);
+            Assert.AreEqual(1, report.FutureRestorationTimestampCount);
+            StringAssert.Contains("Future restoration timestamp", sink.Messages[0]);
+
+            // A future checkpoint is an anomaly, never a source of free production.
+            var region = profile.worldState.regionStates[TestContent.RegionId];
+            region.producerStates[TestContent.PumpProducerId] = new ProducerState
+            {
+                producerId = TestContent.PumpProducerId,
+                buildingInstanceId = TestContent.PumpInstanceId,
+                lastCheckpointUtc = _clock.UtcNow.AddHours(4),
+            };
+            var rewards = new RewardApplier(profile, _clock, new DomainEvents(), Log.Disabled);
+            var testCatalog = TestContent.Create();
+            testCatalog.Index();
+            var production = new ProductionService(testCatalog, profile, rewards, _clock, Log.Disabled);
+            var productionResult = production.Accrue(TestContent.RegionId,
+                region.producerStates[TestContent.PumpProducerId]);
+            Assert.IsTrue(productionResult.clockAnomaly);
+            Assert.AreEqual(0, productionResult.produced);
+            Assert.AreEqual(0, region.producerStates[TestContent.PumpProducerId].storedOutput);
+
+            // Validator flags rather than trusts the timestamp, and recovery preserves
+            // the record for reconciliation instead of silently wiping it.
             var repository = CreateRepository();
             Assert.AreEqual(SaveLoadResult.Success, repository.Save(profile));
             bool loaded = repository.TryLoad(out var restored, out _);
@@ -133,6 +186,78 @@ namespace WalkGame.Tests
             Assert.IsFalse(loaded);
             Assert.AreEqual(SaveLoadResult.IncompatibleSchema, result);
             Assert.IsTrue(repository.MainSaveExists(), "incompatible save must never be deleted");
+        }
+
+        [Test]
+        public void CorruptMainAndBackup_ReportsFailure_WithoutWipingEitherFile()
+        {
+            var repository = CreateRepository();
+            repository.Save(BuildPopulatedProfile(out _));
+            File.WriteAllText(Path.Combine(_directory, "profile.json"), "{ broken main");
+            File.WriteAllText(Path.Combine(_directory, "profile.json.bak"), "{ broken backup");
+
+            bool loaded = repository.TryLoad(out _, out var result);
+
+            Assert.IsFalse(loaded);
+            Assert.AreEqual(SaveLoadResult.Failed, result);
+            Assert.IsTrue(repository.MainSaveExists());
+            Assert.IsTrue(repository.BackupExists());
+        }
+
+        [Test]
+        public void WriteFailureBeforeTempCompletion_PreservesLastKnownGoodMain()
+        {
+            var original = BuildPopulatedProfile(out _);
+            var repository = CreateRepository();
+            Assert.AreEqual(SaveLoadResult.Success, repository.Save(original));
+
+            var failingFileSystem = new FaultInjectingSaveFileSystem { FailOperation = "write" };
+            var failingRepository = CreateRepository(failingFileSystem, Log.Disabled);
+            var attempted = BuildPopulatedProfile(out _);
+            attempted.vitalityBalance += 999;
+
+            Assert.AreEqual(SaveLoadResult.Failed, failingRepository.Save(attempted));
+            Assert.IsFalse(File.Exists(Path.Combine(_directory, "profile.json.tmp")));
+
+            bool loaded = repository.TryLoad(out var restored, out var result);
+            Assert.IsTrue(loaded);
+            Assert.AreEqual(SaveLoadResult.Success, result);
+            Assert.AreEqual(original.vitalityBalance, restored.vitalityBalance);
+        }
+
+        [Test]
+        public void FailureAfterTempCreation_PreservesLastKnownGoodMain()
+        {
+            var repository = CreateRepository();
+            var original = BuildPopulatedProfile(out _);
+            Assert.AreEqual(SaveLoadResult.Success, repository.Save(original));
+
+            var failingFileSystem = new FaultInjectingSaveFileSystem { FailOperation = "copy" };
+            var failingRepository = CreateRepository(failingFileSystem, Log.Disabled);
+            Assert.AreEqual(SaveLoadResult.Failed, failingRepository.Save(BuildPopulatedProfile(out _)));
+
+            bool loaded = repository.TryLoad(out var restored, out var result);
+            Assert.IsTrue(loaded);
+            Assert.AreEqual(SaveLoadResult.Success, result);
+            Assert.AreEqual(original.vitalityBalance, restored.vitalityBalance);
+            Assert.IsFalse(File.Exists(Path.Combine(_directory, "profile.json.tmp")));
+        }
+
+        [Test]
+        public void FailureDuringBackupRotation_LeavesValidBackupForRecovery()
+        {
+            var repository = CreateRepository();
+            var original = BuildPopulatedProfile(out _);
+            Assert.AreEqual(SaveLoadResult.Success, repository.Save(original));
+
+            var failingFileSystem = new FaultInjectingSaveFileSystem { ThrowAfterDeletingMain = true };
+            var failingRepository = CreateRepository(failingFileSystem, Log.Disabled);
+            Assert.AreEqual(SaveLoadResult.Failed, failingRepository.Save(BuildPopulatedProfile(out _)));
+
+            bool loaded = repository.TryLoad(out var restored, out var result);
+            Assert.IsTrue(loaded);
+            Assert.AreEqual(SaveLoadResult.RecoveredFromBackup, result);
+            Assert.AreEqual(original.vitalityBalance, restored.vitalityBalance);
         }
 
         [Test]
@@ -238,6 +363,74 @@ namespace WalkGame.Tests
 
             expectedPlacement = region.buildingStates[TestContent.PumpInstanceId].placement;
             return profile;
+        }
+
+        private sealed class RecordingLog : ILog
+        {
+            public readonly System.Collections.Generic.List<string> Messages =
+                new System.Collections.Generic.List<string>();
+
+            public void Log(LogLevel level, string message)
+            {
+                Messages.Add(message);
+            }
+        }
+
+        private sealed class FaultInjectingSaveFileSystem : ISaveFileSystem
+        {
+            public string FailOperation { get; set; }
+            public bool ThrowAfterDeletingMain { get; set; }
+
+            public void EnsureDirectory(string directory)
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            public bool Exists(string path)
+            {
+                return File.Exists(path);
+            }
+
+            public string ReadAllText(string path)
+            {
+                return File.ReadAllText(path);
+            }
+
+            public void WriteAllText(string path, string contents)
+            {
+                ThrowIf("write");
+                File.WriteAllText(path, contents);
+            }
+
+            public void Copy(string sourceFileName, string destFileName, bool overwrite)
+            {
+                ThrowIf("copy");
+                File.Copy(sourceFileName, destFileName, overwrite);
+            }
+
+            public void Delete(string path)
+            {
+                File.Delete(path);
+                if (ThrowAfterDeletingMain && string.Equals(
+                    Path.GetFileName(path), "profile.json", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new IOException("Injected interruption after main-file deletion.");
+                }
+            }
+
+            public void Move(string sourceFileName, string destFileName)
+            {
+                ThrowIf("move");
+                File.Move(sourceFileName, destFileName);
+            }
+
+            private void ThrowIf(string operation)
+            {
+                if (string.Equals(FailOperation, operation, StringComparison.Ordinal))
+                {
+                    throw new IOException($"Injected {operation} failure.");
+                }
+            }
         }
     }
 }

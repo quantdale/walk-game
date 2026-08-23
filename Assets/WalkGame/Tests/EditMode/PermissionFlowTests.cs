@@ -139,6 +139,20 @@ namespace WalkGame.Tests
             Assert.IsFalse(coordinator.RequestInFlight);
         }
 
+        [Test]
+        public void UnavailableProvider_FailsClosed_WithoutMovementCredit()
+        {
+            var provider = new UnavailableActivityProvider();
+
+            Assert.AreEqual(ActivityPermissionState.Unavailable,
+                provider.GetCapabilityAsync().GetAwaiter().GetResult().motionPermission);
+            Assert.AreEqual(ActivityPermissionState.Unavailable,
+                provider.RequestMotionPermissionAsync().GetAwaiter().GetResult());
+            Assert.IsNull(provider.ReadSnapshotAsync(new ActivityCursor()).GetAwaiter().GetResult());
+            Assert.AreEqual(SessionStartError.SensorUnavailable,
+                provider.StartSessionAsync(SessionType.Walk).GetAwaiter().GetResult());
+        }
+
         /// <summary>Wraps the debug provider but gates the request round-trip so tests
         /// control exactly when permission resolution arrives.</summary>
         private sealed class SingleRequestProvider : IActivityProvider

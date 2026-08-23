@@ -1,0 +1,29 @@
+{
+    "name": "WalkGame.Tests.PlayMode",
+    "rootNamespace": "WalkGame.Tests.PlayMode",
+    "references": [
+        "WalkGame.Core",
+        "WalkGame.Building",
+        "WalkGame.Gameplay",
+        "WalkGame.Activity",
+        "WalkGame.Persistence",
+        "WalkGame.Content",
+        "WalkGame.World",
+        "WalkGame.UI",
+        "WalkGame.App",
+        "UnityEngine.TestRunner"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "nunit.framework.dll"
+    ],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "UNITY_INCLUDE_TESTS"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

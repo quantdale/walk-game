@@ -76,6 +76,22 @@ namespace WalkGame.Tests
         }
 
         [Test]
+        public void RepeatedRawSampleAfterDrain_DoesNotRecreditAcrossPollingCycles()
+        {
+            _reconciler.Fold(1000);
+            _reconciler.Fold(1250);
+            Assert.AreEqual(250, _reconciler.DrainPending());
+
+            // A second passive poll can observe the same absolute counter after the
+            // first delta was persisted and drained; it must not manufacture 250 more.
+            Assert.AreEqual(CounterFoldOutcome.DeltaCredited, _reconciler.Fold(1250));
+            Assert.AreEqual(0, _reconciler.PendingDelta);
+
+            _reconciler.Fold(1300);
+            Assert.AreEqual(50, _reconciler.PendingDelta);
+        }
+
+        [Test]
         public void ExtremelyLargeJump_IsTreatedAsCorruption_AndRebaselinesWithoutCredit()
         {
             _reconciler.Fold(2000);

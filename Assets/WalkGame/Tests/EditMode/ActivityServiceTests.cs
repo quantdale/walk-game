@@ -36,13 +36,13 @@ namespace WalkGame.Tests
             _provider = new DebugActivityProvider(_clock);
         }
 
-        private static ActivitySnapshot PassiveSnapshot(long steps)
+        private ActivitySnapshot PassiveSnapshot(long steps)
         {
             return new ActivitySnapshot
             {
                 providerId = DebugActivityProvider.ProviderIdValue,
-                intervalStartUtc = DateTime.UtcNow.AddMinutes(-30),
-                intervalEndUtc = DateTime.UtcNow,
+                intervalStartUtc = _clock.UtcNow.AddMinutes(-30),
+                intervalEndUtc = _clock.UtcNow,
                 stepCount = steps,
                 sourceType = ActivitySourceType.PhoneSensor,
                 recordingType = ActivityRecordingType.Passive,
@@ -78,7 +78,7 @@ namespace WalkGame.Tests
         {
             // Simulate: steps accumulate, get credited, then device reboots (counter reset).
             _provider.DebugAddSteps(2000);
-            var snapshot = _provider.ReadSnapshotAsync(new ActivityCursor()).Result;
+            var snapshot = _provider.ReadSnapshotAsync(new ActivityCursor()).GetAwaiter().GetResult();
             long first = _activity.ProcessPassiveSnapshot(snapshot);
             Assert.Greater(first, 0);
 
@@ -89,7 +89,7 @@ namespace WalkGame.Tests
             var afterReboot = _provider.ReadSnapshotAsync(new ActivityCursor
             {
                 lastSuccessfulSyncUtc = _profile.activityState.lastSuccessfulSyncUtc,
-            }).Result;
+            }).GetAwaiter().GetResult();
 
             if (afterReboot != null)
             {
@@ -189,7 +189,7 @@ namespace WalkGame.Tests
         public void PermissionDenied_ProducesNoSnapshots_ButGameRemainsPlayable()
         {
             _provider.DebugSetPermission(false);
-            var snapshot = _provider.ReadSnapshotAsync(new ActivityCursor()).Result;
+            var snapshot = _provider.ReadSnapshotAsync(new ActivityCursor()).GetAwaiter().GetResult();
             Assert.IsNull(snapshot);
             // Restoration economy unaffected by activity availability.
             _ledger.Credit(new VitalityCredit { amount = 500, reasonCode = WellKnownIds.ReasonCodes.DebugGrant });
@@ -296,6 +296,20 @@ namespace WalkGame.Tests
             Assert.AreEqual(0, _activity.ProcessPassiveSnapshot(snapshotB));
             Assert.AreEqual(6000, _profile.lifetimeAcceptedSteps,
                 "the replayed window must add zero additional steps");
+        }
+
+        [Test]
+        public void ReplayWithDifferentProviderRecordId_SameIntervalStillCreditsOnce()
+        {
+            var first = PassiveSnapshot(900);
+            first.providerRecordIds.Add("native-record-a");
+            var replay = PassiveSnapshot(900);
+            replay.providerRecordIds.Add("native-record-b");
+
+            Assert.AreEqual(900, _activity.ProcessPassiveSnapshot(first));
+            Assert.AreEqual(0, _activity.ProcessPassiveSnapshot(replay));
+            Assert.AreEqual(900, _profile.lifetimeAcceptedSteps);
+            Assert.AreEqual(900, _ledger.GetBalance());
         }
 
         [Test]
