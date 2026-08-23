@@ -134,7 +134,7 @@ namespace WalkGame.Platform.Android
                 }
                 catch (Exception ex)
                 {
-                    _log.Warning($"startMonitoring failed: {ex.Message}");
+                    _log.Warning($"startMonitoring failed ({ex.GetType().Name}).");
                 }
             }
         }
@@ -176,12 +176,12 @@ namespace WalkGame.Platform.Android
             }
             catch (Exception ex)
             {
-                _log.Warning($"requestPermission failed: {ex.Message}");
+                _log.Warning($"requestPermission failed ({ex.GetType().Name}).");
                 return ReadRefinedPermission();
             }
 
-            DateTime deadline = DateTime.UtcNow + RequestPollTimeout;
-            while (DateTime.UtcNow < deadline)
+            DateTime deadline = _clock.UtcNow + RequestPollTimeout;
+            while (_clock.UtcNow < deadline)
             {
                 await Task.Delay(RequestPollIntervalMs);
 
@@ -373,7 +373,7 @@ namespace WalkGame.Platform.Android
             }
             catch (Exception ex)
             {
-                _log.Warning($"Step counter availability check failed: {ex.Message}");
+                _log.Warning($"Step counter availability check failed ({ex.GetType().Name}).");
                 return false;
             }
         }
@@ -387,7 +387,7 @@ namespace WalkGame.Platform.Android
             }
             catch (Exception ex)
             {
-                _log.Warning($"getAuthorizationStatus failed: {ex.Message}");
+                _log.Warning($"getAuthorizationStatus failed ({ex.GetType().Name}).");
                 return ActivityPermissionState.Unavailable;
             }
 
@@ -425,7 +425,7 @@ namespace WalkGame.Platform.Android
             }
             catch (Exception ex)
             {
-                _log.Warning($"getCumulativeSteps failed: {ex.Message}");
+                _log.Warning($"getCumulativeSteps failed ({ex.GetType().Name}).");
                 return;
             }
 

@@ -3,6 +3,13 @@ using WalkGame.Core;
 
 namespace WalkGame.Persistence
 {
+    public sealed class SaveValidationReport
+    {
+        public int FutureRestorationTimestampCount { get; internal set; }
+
+        public bool HasAnomalies => FutureRestorationTimestampCount > 0;
+    }
+
     /// <summary>
     /// Load-time invariant repair/rejection (DATA_MODEL.md 20). Repairs are conservative:
     /// impossible values clamp to safe bounds, unresolvable references are pruned with a
@@ -10,14 +17,21 @@ namespace WalkGame.Persistence
     /// </summary>
     public static class SaveValidator
     {
-        public static void RepairAndValidate(PlayerProfile profile, Log log)
+        public static SaveValidationReport RepairAndValidate(PlayerProfile profile, Log log)
+        {
+            return RepairAndValidate(profile, SystemClock.Instance, log);
+        }
+
+        public static SaveValidationReport RepairAndValidate(PlayerProfile profile, IClock clock, Log log)
         {
             if (profile == null)
             {
                 throw new ArgumentNullException(nameof(profile));
             }
 
+            clock = clock ?? SystemClock.Instance;
             log = log ?? Log.Disabled;
+            var report = new SaveValidationReport();
             var world = profile.worldState ?? new WorldState();
             profile.worldState = world;
 
@@ -53,7 +67,7 @@ namespace WalkGame.Persistence
 
             foreach (var regionPair in world.regionStates)
             {
-                RepairRegion(regionPair.Value, log);
+                RepairRegion(regionPair.Value, clock, log, report);
             }
 
             // Dedup stores are additive schema fields (campaign S8): repair explicit
@@ -63,9 +77,11 @@ namespace WalkGame.Persistence
             profile.activityState = activity;
             (activity.creditedIntervals ??= new CreditedActivityKeys()).Rebuild();
             (activity.creditedSessionIds ??= new CreditedActivityKeys()).Rebuild();
+
+            return report;
         }
 
-        private static void RepairRegion(RegionState region, Log log)
+        private static void RepairRegion(RegionState region, IClock clock, Log log, SaveValidationReport report)
         {
             if (region == null || string.IsNullOrEmpty(region.regionId))
             {
@@ -96,12 +112,14 @@ namespace WalkGame.Persistence
                 placement.rotationQuarterTurns = ((placement.rotationQuarterTurns % 4) + 4) % 4;
 
                 // Timestamps far in the future are flagged for reconciliation.
-                // Intentional wall-clock comparison: corruption detection heuristic,
-                // not economic calculation (campaign S9).
+                // Future timestamps are an anomaly for reconciliation. They remain in
+                // the save so recovery never destroys state, but callers receive an
+                // explicit report and the warning is observable in diagnostics.
                 if (building.restorationCompletedAtUtc.HasValue &&
-                    building.restorationCompletedAtUtc.Value > DateTime.UtcNow.AddDays(1))
+                    building.restorationCompletedAtUtc.Value > clock.UtcNow.AddDays(1))
                 {
                     log.Warning($"Future restoration timestamp on '{building.instanceId}' flagged.");
+                    report.FutureRestorationTimestampCount++;
                 }
             }
         }

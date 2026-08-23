@@ -38,7 +38,7 @@ namespace WalkGame.App
 
             _motionPermissions = new MotionPermissionCoordinator(host.Provider, host.Log);
             _motionPermissions.StateChanged += _ => RefreshAll();
-            _ = _motionPermissions.RefreshAsync(); // reconcile with platform on boot
+            StartCoroutine(RefreshMotionPermissionRoutine());
 
             _hud.Bind(new UiContext
             {
@@ -138,12 +138,15 @@ namespace WalkGame.App
             }
 
             var startTask = debug.StartSessionAsync(SessionType.Walk);
-            while (!startTask.IsCompleted)
+            var startObservation = new TaskObservation<SessionStartError>();
+            var startObserver = TaskObservation.Observe(startTask, startObservation);
+            while (!startObserver.IsCompleted)
             {
                 yield return null;
             }
 
-            if (startTask.IsFaulted || startTask.Result != SessionStartError.None)
+            if (startObservation.IsFaulted || startObservation.IsCanceled ||
+                startObservation.Value != SessionStartError.None)
             {
                 yield break;
             }
@@ -151,17 +154,19 @@ namespace WalkGame.App
             debug.SimulateVehicleDrive(minutes: 30);
 
             var stopTask = debug.StopSessionAsync();
-            while (!stopTask.IsCompleted)
+            var stopObservation = new TaskObservation<SessionResult>();
+            var stopObserver = TaskObservation.Observe(stopTask, stopObservation);
+            while (!stopObserver.IsCompleted)
             {
                 yield return null;
             }
 
-            if (stopTask.IsFaulted)
+            if (stopObservation.IsFaulted || stopObservation.IsCanceled)
             {
                 yield break;
             }
 
-            var result = stopTask.Result;
+            var result = stopObservation.Value;
             var trust = new TrustEvaluator(RewardPolicy.Default);
             result.trustScore = trust.EvaluateSession(new ActiveSessionState
             {
@@ -216,22 +221,40 @@ namespace WalkGame.App
             StartCoroutine(MotionPermissionRoutine());
         }
 
+        private IEnumerator RefreshMotionPermissionRoutine()
+        {
+            var request = _motionPermissions.RefreshAsync();
+            var observation = new TaskObservation<ActivityPermissionState>();
+            var observer = TaskObservation.Observe(request, observation);
+            while (!observer.IsCompleted)
+            {
+                yield return null;
+            }
+
+            if (observation.IsFaulted || observation.IsCanceled)
+            {
+                GameHost.Current?.Log.Warning("Motion permission refresh faulted; state left unchanged.");
+            }
+        }
+
         private IEnumerator MotionPermissionRoutine()
         {
             var request = _motionPermissions.RequestAsync();
-            while (!request.IsCompleted)
+            var observation = new TaskObservation<MotionPermissionOutcome>();
+            var observer = TaskObservation.Observe(request, observation);
+            while (!observer.IsCompleted)
             {
                 yield return null;
             }
 
             _permissionRequestInFlight = false;
-            if (request.IsFaulted)
+            if (observation.IsFaulted || observation.IsCanceled)
             {
-                GameHost.Current.Log.Warning("Motion permission request faulted; state left unchanged.");
+                GameHost.Current?.Log.Warning("Motion permission request faulted; state left unchanged.");
             }
             else
             {
-                GameHost.Current.Log.Info($"Motion permission outcome: {request.Result}.");
+                GameHost.Current?.Log.Info($"Motion permission outcome: {observation.Value}.");
             }
 
             RefreshAll();

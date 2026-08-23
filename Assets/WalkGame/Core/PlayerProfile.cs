@@ -11,7 +11,9 @@ namespace WalkGame.Core
     {
         public int schemaVersion = SaveSchemaVersions.Current;
         public string profileId = Guid.NewGuid().ToString("D");
-        public DateTime createdAtUtc = DateTime.UtcNow;
+        // GameHost stamps this through its injected clock. A plain domain object must
+        // not reach for the device wall clock during construction.
+        public DateTime createdAtUtc = DateTime.MinValue;
         public DateTime lastSavedAtUtc = DateTime.MinValue;
 
         public long lifetimeAcceptedSteps;

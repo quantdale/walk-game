@@ -67,13 +67,15 @@ namespace WalkGame.App
                 };
 
                 var readTask = host.Provider.ReadSnapshotAsync(cursor);
+                var readObservation = new TaskObservation<ActivitySnapshot>();
+                var readObserver = TaskObservation.Observe(readTask, readObservation);
                 float deadline = Time.realtimeSinceStartup + ReconcileTimeoutSeconds;
-                while (!readTask.IsCompleted && Time.realtimeSinceStartup < deadline)
+                while (!readObserver.IsCompleted && Time.realtimeSinceStartup < deadline)
                 {
                     yield return null;
                 }
 
-                if (!readTask.IsCompleted)
+                if (!readObserver.IsCompleted)
                 {
                     // Timeout counts as a failed query: fail closed without touching
                     // durable state so the next successful window re-reads everything.
@@ -82,12 +84,12 @@ namespace WalkGame.App
                     yield break;
                 }
 
-                if (!HandleFault(readTask))
+                if (!HandleFault(readObservation))
                 {
                     yield break;
                 }
 
-                var snapshot = readTask.Result; // safe: completed above
+                var snapshot = readObservation.Value;
                 if (snapshot != null)
                 {
                     // Domain credit + cursor advance mutate together; persist only after success.
@@ -123,12 +125,14 @@ namespace WalkGame.App
             }
 
             var startTask = debug.StartSessionAsync(type);
-            while (!startTask.IsCompleted)
+            var startObservation = new TaskObservation<SessionStartError>();
+            var startObserver = TaskObservation.Observe(startTask, startObservation);
+            while (!startObserver.IsCompleted)
             {
                 yield return null;
             }
 
-            if (!HandleFault(startTask) || startTask.Result != SessionStartError.None)
+            if (!HandleFault(startObservation) || startObservation.Value != SessionStartError.None)
             {
                 yield break;
             }
@@ -138,17 +142,19 @@ namespace WalkGame.App
             debug.SimulateSessionProgress(steps, meters, movingSeconds);
 
             var stopTask = debug.StopSessionAsync();
-            while (!stopTask.IsCompleted)
+            var stopObservation = new TaskObservation<SessionResult>();
+            var stopObserver = TaskObservation.Observe(stopTask, stopObservation);
+            while (!stopObserver.IsCompleted)
             {
                 yield return null;
             }
 
-            if (!HandleFault(stopTask))
+            if (!HandleFault(stopObservation))
             {
                 yield break;
             }
 
-            var result = stopTask.Result;
+            var result = stopObservation.Value;
             var trust = new TrustEvaluator(RewardPolicy.Default);
             result.trustScore = trust.EvaluateSession(
                 new ActiveSessionState
@@ -167,17 +173,17 @@ namespace WalkGame.App
         }
 
         /// <summary>Returns false when the task faulted or was canceled; logs and surfaces state.</summary>
-        private bool HandleFault<T>(System.Threading.Tasks.Task<T> task)
+        private bool HandleFault<T>(TaskObservation<T> observation)
         {
-            if (task.IsFaulted)
+            if (observation.IsFaulted)
             {
                 LastReconcileFailed = true;
-                var inner = task.Exception?.GetBaseException();
-                GameHost.Current?.Log.Error($"Activity provider task faulted: {inner?.Message ?? task.Exception?.Message}");
+                var inner = observation.Exception?.GetBaseException();
+                GameHost.Current?.Log.Error($"Activity provider task faulted ({inner?.GetType().Name ?? observation.Exception?.GetType().Name}).");
                 return false;
             }
 
-            if (task.IsCanceled)
+            if (observation.IsCanceled)
             {
                 LastReconcileFailed = true;
                 GameHost.Current?.Log.Warning("Activity provider task was canceled.");

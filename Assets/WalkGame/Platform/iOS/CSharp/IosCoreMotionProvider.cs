@@ -121,7 +121,7 @@ namespace WalkGame.Platform.iOS
                 return null;
             }
 
-            return source.Task.Result;
+            return await source.Task;
         }
 
         private readonly struct IosQueryOutcome

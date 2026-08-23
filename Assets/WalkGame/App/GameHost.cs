@@ -20,6 +20,19 @@ namespace WalkGame.App
     {
         public static GameHost Current { get; private set; }
 
+        /// <summary>
+        /// Runtime-test seam for an isolated profile directory. Production leaves this
+        /// null and uses Application.persistentDataPath; tests never touch a developer's
+        /// real save while exercising restart and reload behavior.
+        /// </summary>
+        public static string SaveDirectoryOverride { get; set; }
+
+        /// <summary>
+        /// Runtime-test seam for deterministic lifecycle and offline-production checks.
+        /// Production leaves this null and uses the device UTC clock.
+        /// </summary>
+        public static IClock ClockOverride { get; set; }
+
         public IClock Clock { get; private set; }
         public Log Log { get; private set; }
         public DomainEvents Events { get; private set; }
@@ -60,18 +73,22 @@ namespace WalkGame.App
             Log = new Log(new UnityLogSink(), LogLevel.Warning);
 #endif
 
-            Clock = new OffsetClock(SystemClock.Instance);
+            Clock = new OffsetClock(ClockOverride ?? SystemClock.Instance);
             Events = new DomainEvents();
             Catalog = new AshfallBasinCatalog();
             WorldRegistry.CurrentCatalog = Catalog;
             WorldRegistry.CurrentRegion = Catalog.Ashfall;
 
+            string saveDirectory = string.IsNullOrWhiteSpace(SaveDirectoryOverride)
+                ? Application.persistentDataPath
+                : SaveDirectoryOverride;
             _repository = new FileSaveRepository(
-                Application.persistentDataPath,
+                saveDirectory,
                 "walkgame.profile.json",
                 new JsonSaveSerializer(),
                 new SaveMigrator(),
-                Log);
+                Log,
+                Clock);
 
             bool fresh = !_repository.TryLoad(out var profile, out var result);
             if (fresh)
@@ -158,8 +175,9 @@ namespace WalkGame.App
         }
 
         /// <summary>
-        /// Editor/desktop and any unsupported device fall back to the debug provider so the
-        /// game remains fully playable offline (AGENT_EXECUTION_GUIDE invariant 10).
+        /// The debug provider is explicit in the editor/development harness. A missing
+        /// native bridge on a release target is an unavailable movement capability, not
+        /// permission to mint debug movement credit.
         /// </summary>
         private IActivityProvider CreateProvider()
         {
@@ -174,12 +192,25 @@ namespace WalkGame.App
             {
                 // Only genuine bridge/packaging failures land here; missing runtime
                 // permission is a normal provider state handled by the permission UI.
-                Log.Warning($"Android step provider unavailable ({ex.Message}); using debug provider.");
+                Log.Error($"Android step provider unavailable; movement rewards disabled ({ex.GetType().Name}).");
+                return new UnavailableActivityProvider();
             }
 #elif UNITY_IOS && !UNITY_EDITOR
-            return new WalkGame.Platform.iOS.IosCoreMotionProvider(Clock);
+            try
+            {
+                return new WalkGame.Platform.iOS.IosCoreMotionProvider(Clock);
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"iOS motion provider unavailable; movement rewards disabled ({ex.GetType().Name}).");
+                return new UnavailableActivityProvider();
+            }
 #endif
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
             return new DebugActivityProvider(Clock);
+#else
+            return new UnavailableActivityProvider();
+#endif
         }
 
         private void EnsureRegionState()
@@ -238,10 +269,16 @@ namespace WalkGame.App
 
         private void OnDestroy()
         {
-            if (Current == this)
+            if (Current != this)
+            {
+                return;
+            }
+
+            if (_repository != null && Profile != null)
             {
                 Persist();
             }
+            Current = null;
         }
 
         private sealed class UnityLogSink : ILog

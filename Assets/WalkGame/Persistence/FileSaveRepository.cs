@@ -18,8 +18,17 @@ namespace WalkGame.Persistence
         private readonly ISaveSerializer _serializer;
         private readonly SaveMigrator _migrator;
         private readonly Log _log;
+        private readonly IClock _clock;
+        private readonly ISaveFileSystem _fileSystem;
 
-        public FileSaveRepository(string directory, string fileName, ISaveSerializer serializer, SaveMigrator migrator, Log log)
+        public FileSaveRepository(
+            string directory,
+            string fileName,
+            ISaveSerializer serializer,
+            SaveMigrator migrator,
+            Log log,
+            IClock clock = null,
+            ISaveFileSystem fileSystem = null)
         {
             if (string.IsNullOrWhiteSpace(directory))
             {
@@ -29,8 +38,10 @@ namespace WalkGame.Persistence
             _serializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
             _migrator = migrator ?? throw new ArgumentNullException(nameof(migrator));
             _log = log ?? Log.Disabled;
+            _clock = clock ?? SystemClock.Instance;
+            _fileSystem = fileSystem ?? new LocalSaveFileSystem();
 
-            Directory.CreateDirectory(directory);
+            _fileSystem.EnsureDirectory(directory);
             _mainPath = Path.Combine(directory, fileName);
             _backupPath = _mainPath + ".bak";
             _tempPath = _mainPath + ".tmp";
@@ -45,10 +56,9 @@ namespace WalkGame.Persistence
 
             try
             {
-                // Intentional wall clock: lastSavedAtUtc is save-file metadata for
-                // debugging, not economic time (campaign S9); injecting a clock here
-                // would not change any gameplay decision.
-                profile.lastSavedAtUtc = DateTime.UtcNow;
+                // Save metadata is still not an economic input, but using the trusted
+                // clock keeps persistence deterministic when the device clock changes.
+                profile.lastSavedAtUtc = _clock.UtcNow;
                 string payload = _serializer.Serialize(profile);
 
                 // Validate before touching the live file: a payload that cannot
@@ -60,27 +70,27 @@ namespace WalkGame.Persistence
                     return SaveLoadResult.Failed;
                 }
 
-                File.WriteAllText(_tempPath, payload);
+                _fileSystem.WriteAllText(_tempPath, payload);
 
-                if (File.Exists(_mainPath))
+                if (_fileSystem.Exists(_mainPath))
                 {
-                    File.Copy(_mainPath, _backupPath, overwrite: true);
+                    _fileSystem.Copy(_mainPath, _backupPath, overwrite: true);
                     // Backup already holds last-known-good; safe to remove before move.
-                    File.Delete(_mainPath);
+                    _fileSystem.Delete(_mainPath);
                 }
                 else
                 {
                     // First-ever save: the validated payload is itself the last known
                     // good state, so seed the backup from it.
-                    File.Copy(_tempPath, _backupPath, overwrite: true);
+                    _fileSystem.Copy(_tempPath, _backupPath, overwrite: true);
                 }
 
-                File.Move(_tempPath, _mainPath);
+                _fileSystem.Move(_tempPath, _mainPath);
                 return SaveLoadResult.Success;
             }
             catch (Exception ex)
             {
-                _log.Error($"Save failed: {ex.Message}");
+                _log.Error($"Save failed while rotating save files ({ex.GetType().Name}).");
                 TryCleanupTemp();
                 return SaveLoadResult.Failed;
             }
@@ -126,12 +136,12 @@ namespace WalkGame.Persistence
 
         public bool MainSaveExists()
         {
-            return File.Exists(_mainPath);
+            return _fileSystem.Exists(_mainPath);
         }
 
         public bool BackupExists()
         {
-            return File.Exists(_backupPath);
+            return _fileSystem.Exists(_backupPath);
         }
 
         public void DeleteAll()
@@ -146,7 +156,7 @@ namespace WalkGame.Persistence
             profile = null;
             failure = SaveLoadResult.Success;
 
-            if (!File.Exists(path))
+            if (!_fileSystem.Exists(path))
             {
                 failure = SaveLoadResult.Empty;
                 return false;
@@ -154,29 +164,29 @@ namespace WalkGame.Persistence
 
             try
             {
-                string payload = File.ReadAllText(path);
+                string payload = _fileSystem.ReadAllText(path);
                 var parsed = _serializer.Deserialize(payload);
                 if (parsed == null)
                 {
-                    _log.Warning($"Unreadable save at '{path}'.");
+                    _log.Warning("Unreadable save slot.");
                     failure = SaveLoadResult.Failed;
                     return false;
                 }
 
                 if (!_migrator.TryMigrateToCurrent(parsed, out string migrationError))
                 {
-                    _log.Error($"Incompatible save at '{path}': {migrationError}");
+                    _log.Error($"Incompatible save schema: {migrationError}");
                     failure = SaveLoadResult.IncompatibleSchema;
                     return false;
                 }
 
-                SaveValidator.RepairAndValidate(parsed, _log);
+                SaveValidator.RepairAndValidate(parsed, _clock, _log);
                 profile = parsed;
                 return true;
             }
             catch (Exception ex)
             {
-                _log.Warning($"Corrupt save at '{path}': {ex.Message}");
+                _log.Warning($"Corrupt save slot ({ex.GetType().Name}).");
                 failure = SaveLoadResult.Failed;
                 return false;
             }
@@ -186,9 +196,9 @@ namespace WalkGame.Persistence
         {
             try
             {
-                if (File.Exists(_tempPath))
+                if (_fileSystem.Exists(_tempPath))
                 {
-                    File.Delete(_tempPath);
+                    _fileSystem.Delete(_tempPath);
                 }
             }
             catch
@@ -201,15 +211,54 @@ namespace WalkGame.Persistence
         {
             try
             {
-                if (File.Exists(path))
+                if (_fileSystem.Exists(path))
                 {
-                    File.Delete(path);
+                    _fileSystem.Delete(path);
                 }
             }
             catch (Exception ex)
             {
-                _log.Warning($"Could not delete '{path}': {ex.Message}");
+                _log.Warning($"Could not delete save slot ({ex.GetType().Name}).");
             }
+        }
+    }
+
+    /// <summary>Production implementation of the repository file-operation seam.</summary>
+    internal sealed class LocalSaveFileSystem : ISaveFileSystem
+    {
+        public void EnsureDirectory(string directory)
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        public bool Exists(string path)
+        {
+            return File.Exists(path);
+        }
+
+        public string ReadAllText(string path)
+        {
+            return File.ReadAllText(path);
+        }
+
+        public void WriteAllText(string path, string contents)
+        {
+            File.WriteAllText(path, contents);
+        }
+
+        public void Copy(string sourceFileName, string destFileName, bool overwrite)
+        {
+            File.Copy(sourceFileName, destFileName, overwrite);
+        }
+
+        public void Delete(string path)
+        {
+            File.Delete(path);
+        }
+
+        public void Move(string sourceFileName, string destFileName)
+        {
+            File.Move(sourceFileName, destFileName);
         }
     }
 }

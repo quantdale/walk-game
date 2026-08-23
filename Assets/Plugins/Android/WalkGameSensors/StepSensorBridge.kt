@@ -68,9 +68,11 @@ class StepSensorBridge {
      * 0 unavailable (< API 29 or missing sensor), 1 not determined, 2 denied, 3 granted.
      */
     fun getAuthorizationStatus(): Int {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            return if (isStepCounterAvailable()) 3 else 0
-        }
+        // A permission grant cannot make an emulator/device without the actual
+        // counter sensor usable. Report unavailable first so the C# layer does not
+        // present a misleading permission state or start a dead monitor.
+        if (!isStepCounterAvailable()) return 0
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return 3
         val ctx = appContext ?: return 0
         return try {
             val granted = ctx.checkSelfPermission(Manifest.permission.ACTIVITY_RECOGNITION) ==

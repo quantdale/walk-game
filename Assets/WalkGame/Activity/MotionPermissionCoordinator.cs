@@ -81,7 +81,7 @@ namespace WalkGame.Activity
             {
                 // A failing permission probe must never break gameplay; treat as unknown
                 // and let the next RefreshAsync reconcile with the platform.
-                _log.Warning($"Motion permission request failed: {ex.Message}");
+                _log.Warning($"Motion permission request failed ({ex.GetType().Name}).");
                 return MotionPermissionOutcome.StillNotDetermined;
             }
             finally
