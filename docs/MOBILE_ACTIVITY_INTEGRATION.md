@@ -374,6 +374,22 @@ Avoid requesting all permissions on first launch.
 - iOS: while NotDetermined, one benign asynchronous Core Motion query triggers the
   system dialog; status is polled to resolution.
 
+### Player-facing Expedition surface (current slice)
+
+`ExpeditionController` owns the runtime start/poll/finish presentation, but not reward
+math. It observes each provider task from a coroutine, claims the domain's active-session
+window only after provider start succeeds, and sends the final facts through
+`ActivityService.ProcessSessionResult`. The HUD exposes Walk/Run start buttons, live
+steps/distance/moving-time, a safe finish action, bounded-bonus copy, and a concise
+resulting Vitality summary. Permission, unavailable-sensor, and interrupted-session
+states use consequence-focused player copy.
+
+When the app loses focus or pauses, the active session is marked paused in the UI and
+polling waits without blocking or inventing movement. On resume it reports that tracking
+is live again; a stop failure abandons the in-memory claim so passive movement remains
+safe. This lifecycle path is automated/domain-ready but native background/device behavior
+is still **UNVERIFIED**.
+
 ## 16. Native error model
 
 Normalize platform errors into domain-level codes:

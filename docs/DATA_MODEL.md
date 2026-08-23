@@ -20,6 +20,7 @@ PlayerProfile
 - activityState: ActivitySyncState
 - achievementState: AchievementState
 - settings: PlayerSettings
+- recentVitalityTransactions: bounded List<VitalityTransaction>
 ```
 
 ## 3. World state
@@ -43,6 +44,8 @@ RegionState
 - communityScore: int
 - knowledgeScore: int
 - completedProjectIds: Set<string>
+- unlockedProjectIds: Set<string>
+- environmentFlags: Set<string>
 - buildingStates: Dictionary<BuildingInstanceId, BuildingState>
 - discoveredLoreIds: Set<string>
 - arrivedNpcIds: Set<string>
@@ -111,6 +114,11 @@ ActivitySyncState
 - activeSession: ActiveSessionState?
 ```
 
+`environmentFlags` are canonical presentation switches such as flowing river, living
+wetland, and revived grove. They are derived by reward actions and are never inferred
+from materials, GameObjects, or a scene-only visual. `unlockedProjectIds` remains
+separate from completion so a project can be surfaced before it is affordable.
+
 The exact provider cursor is adapter-specific and should be wrapped so platform details do not leak into game logic.
 Dedup structures serialize their ordered `entries` field; the membership index is rebuilt on load (SaveValidator).
 
@@ -174,6 +182,26 @@ ActivitySessionResult
 - trustScore: float
 - bonusBreakdown: ActivityBonusBreakdown
 ```
+
+## 13A. Player settings and derived presentation views
+
+```text
+PlayerSettings
+- debugToolsEnabled: bool (development only)
+- expeditionLocationOptIn: bool
+- masterAudioVolume: float 0..1
+- musicVolume: float 0..1
+- effectsVolume: float 0..1
+- hapticsEnabled: bool
+- reducedMotion: bool
+- onboardingCompleted: bool
+- onboardingStep: int
+```
+
+Producer cards, project status cards, offline-production summaries, and Builder selection
+views are derived at runtime. They are not additional save authority. Additive settings
+and environment fields default safely under save schema version 1; `SaveValidator` repairs
+null collections and clamps malformed settings without deleting world progress.
 
 ## 13. Bonus breakdown
 

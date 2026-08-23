@@ -118,6 +118,24 @@ Validates and commits placement transforms.
 ### `ProductionService`
 Calculates passive/offline production from timestamps.
 
+### Player-facing presentation services
+
+The Ashfall slice adds thin presentation services without moving authority out of the
+canonical/domain boundary:
+
+- `RegionEnvironmentPresenter` builds the reusable procedural basin kit once and derives
+  river, grove, wetland, gate, lighting, atmosphere, particles, and stage accents from
+  `RegionState`.
+- `ExplorationService` owns lore discovery mutations; `NpcActor` and `LoreActor` are
+  scene projections only.
+- `ExpeditionController` observes provider tasks from coroutines and sends the one active
+  session result through `ActivityService`; it never creates a second reward path.
+- `FeedbackController` centralizes optional audio/haptic cues and persisted master/music/
+  effects/reduced-motion settings. Missing clips do not affect gameplay comprehension.
+- `HudController` and `ProjectPanelController` consume `UiContext` view delegates. They
+  use safe-area roots, responsive CanvasScaler anchors, reusable rows, and contextual
+  permission/save/empty states rather than exposing native error strings.
+
 ## 6. Scene architecture
 
 ### Persistent bootstrap scene
@@ -364,6 +382,11 @@ RegionPresenter
 ├── coordinates NPC/landmark presentation
 └── listens to domain events
 ```
+
+The implementation adds a `RegionEnvironmentPresenter` child and world-actor projection
+layer to this contract. `BuildingActor` still projects canonical grid placement and
+lifecycle; placement previews are explicitly transient and are committed only by
+`BuildingPlacementService`.
 
 ## 19. Native iOS bridge
 

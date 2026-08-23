@@ -12,29 +12,26 @@ Evidence tiers:
 - **DEVICE** — requires physical/emulated mobile hardware.
 - **UNVERIFIED** — claimed by no evidence yet.
 
-Last updated: 2026-08-23 (Unity bring-up & activity hardening campaign)
+Last updated: 2026-08-23 (Ashfall Basin player-facing development campaign)
 
 ## Verification status
 
-- Domain test suite: **107/107 passing (AUTOMATED)** via
+- Domain test suite: **113/113 passing (AUTOMATED)** via
   `dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj`
   (`scripts/verify-domain.ps1`; also runs in CI on every push/PR to `main`).
 - CI domain gate: configured (`.github/workflows/domain-tests.yml`) — **AUTOMATED**.
-- Unity `6000.3.4f1` was installed at `C:\UnityEditors\6000.3.4f1\Editor`, but the
-  non-elevated installer left `Data\Resources\PackageManager\Server\UnityPackageManager.exe`
-  absent. The first intact batch import reached the licensing gate and terminated before
-  compilation with `No valid Unity Editor license found` (Unity log return code 198); the
-  licensing client reported zero entitlement groups and no access token. The committed
-  EditMode wrapper was invoked and recorded that same licensing failure (wrapper exit
-  127; log records Unity return 198). A later setup/import attempt independently stopped
-  on the missing Package Manager server. Unity compile, EditMode, and PlayMode therefore
-  remain **UNVERIFIED**.
-- Android Build Support is not present in the final usable editor (`AndroidPlayer` is
-  absent after the non-elevated module attempt), and no licensed editor build could run.
+- Unity `6000.3.4f1` is installed at `C:\UnityEditors\6000.3.4f1\Editor`, its executable
+  reports the pinned version, and `Data\Resources\PackageManager\Server\UnityPackageManager.exe`
+  is present. Batch setup and the committed EditMode wrapper still terminate at the
+  licensing gate (wrapper exit 127; Unity licensing log reports no ULF, no token, and
+  zero entitlement groups), before project compilation. Unity compile, EditMode, and
+  PlayMode therefore remain **UNVERIFIED**.
+- Android Build Support is not present in the editor (`AndroidPlayer` is absent), and no
+  licensed editor build could run.
   Android build/install/launch and native lifecycle evidence remain **UNVERIFIED**.
   iOS Xcode generation/build remains **UNVERIFIED** (no macOS/Xcode).
-- Static bring-up audit of assemblies/GUIDs/scenes/packages: **AUTOMATED**; zero missing
-  real GUID references and zero missing asset `.meta` files remain. The only unresolved
+- Static bring-up audit of assemblies/GUIDs/scenes/packages: **AUTOMATED**; 91 asset files
+  and 91 `.meta` files pass the audit, with zero missing real GUID references. The only unresolved
   scene GUID is Unity's built-in zero GUID for the authored light.
 
 ## Phase 0 - Foundation
@@ -61,20 +58,25 @@ RegionDefinition/RegionState/stable IDs per DATA_MODEL.md; Ashfall Basin
 content-as-code with integrity tests; buildings instantiate from state via
 `RegionPresenter`/`BuildingActor`; single-scene MVP load; save schema v1 with
 sequential migrator; deterministic fixtures — **AUTOMATED**.
-Gray-box terrain visuals pending first-editor-open art pass (**UNVERIFIED**).
+The runtime now contains a reusable procedural Ashfall environment kit (routes, settlement,
+river/waterworks, grove/wetland, workshop, greenhouse, research, residential district,
+transit gate, story spaces, and stage-driven ambience). Code/static readiness is
+**AUTOMATED**; editor visual inspection remains **UNVERIFIED**.
 
 ## Phase 2 - Restoration and builder loop
 
 VitalityLedger, debug provider (+1,000 steps), step-to-Vitality conversion, project
 definitions/prerequisites/transactions, ruin-to-restored swap, builder camera,
 placement grid validation, move preview/confirm/cancel, persisted placement incl.
-save/reload identity — **AUTOMATED**. On-device touch behavior — **UNVERIFIED**.
+save/reload identity — **AUTOMATED**. Responsive touch/UI paths are implemented; on-device
+touch behavior — **UNVERIFIED**.
 
 ## Phase 3 - Explore mode
 
 Third-person controller + follow camera, explicit mode state machine, authored spawn,
 canonical state shared by both views, boundary clamping, NPC/lore as domain state —
-**AUTOMATED**. Scene-side NPC actors/ambience remain stubs for the art pass.
+**AUTOMATED**. Scene-side NPC actors, lore markers, interaction prompts, authored anchors,
+and stage ambience are implemented; PlayMode visual behavior — **UNVERIFIED**.
 
 ## Phase 4 - Native activity integration
 
@@ -100,14 +102,16 @@ Campaign-hardened (see ADR 0005):
 ## Phase 5 - Idle/incremental systems
 
 ProductionService checkpoint math, offline cap, backward-clock clamp, storage caps,
-tier multipliers, collection API + dedicated HUD collect buttons refreshed on ticker
-cadence — **AUTOMATED**.
+tier multipliers, collection API, offline resume summary, producer status rows, and
+dedicated HUD collect buttons refreshed on ticker cadence — **AUTOMATED**.
 
 ## Phase 6 - Vertical-slice content
 
 Ashfall Basin: 15 restoration projects, 9 building instances, 4 producers, 3 NPCs,
 5 lore objects, milestone ladder, stages 0-3, scripted full-playthrough test reaching
-the transit-gate finale — **AUTOMATED**. Visual stages are gray-box tints pending art/audio.
+the transit-gate finale — **AUTOMATED**. Canonical-state-derived visual stages, restoration
+feedback hooks, responsive project/producer HUD, onboarding, and Expedition presentation
+are code/static-ready; Unity runtime presentation — **UNVERIFIED**.
 
 ## Exactly-once movement rewards
 
@@ -134,10 +138,11 @@ been silently dropping them was found and fixed). Regression suites:
   optional step-counter hardware plus `ACTIVITY_RECOGNITION`; no location permission is
   mandatory. Save diagnostics no longer include local save paths. Release logging is
   warning-level; device log review remains **UNVERIFIED**.
-- Performance readiness: **AUTOMATED/static review**. No obvious per-frame LINQ,
-  repeated scene lookup, or sensor-payload logging hotspot was found in the slice. No
-  FPS/allocation/thermal numbers are claimed; physical-device profiling remains
-  **UNVERIFIED**.
+- Performance readiness: **AUTOMATED/static review**. The presentation uses shared
+  materials/property blocks for repeated geometry, reused UI rows, a non-allocating
+  Explore interaction scan, checkpoint production math, and reduced-motion gating for
+  particles. No FPS/allocation/thermal numbers are claimed; physical-device profiling
+  remains **UNVERIFIED**.
 
 ## Phases 7B-9
 
@@ -146,17 +151,17 @@ expansion gates remain unverified or intentionally out of scope for this campaig
 
 ## Environment record for this campaign
 
-- Start SHA `13fcdc1affa672220f3c60d07147e6521fa15732`, clean tree, synced with
-  `origin/main` at campaign start.
+- Start SHA `c8fe24d792ea8f2eab7d80b62d96354a62f81727`, clean tree, synced with
+  `origin/main` at campaign start. Player-facing checkpoint `11735af` is committed and
+  pushed to `main`.
 - Available tooling: .NET SDK 8.0.424; Unity Hub 3.21.0; exact Unity editor
   `6000.3.4f1`; JDK 17.0.20; Android SDK platforms 36/37.0, build-tools 35/36,
   NDK 27.0/27.1; `adb` 37.0.1; API-36 emulator `emulator-5554`.
 - Licensing/installation: no Unity access token or entitlement was available. A manual
   activation file was generated for handoff and removed from the repository; activation
-  requires a user account/manual step outside this environment. The non-elevated exact
-  editor install also lacks the Package Manager server and Android player module, so a
-  locally elevated reinstall/module installation is required before Unity compilation or
-  APK generation can be attempted again.
+  requires a user account/manual step outside this environment. Package Manager server
+  integrity is now confirmed, but the editor still lacks a valid license and Android player
+  module, so Unity compilation or APK generation cannot be certified here.
 - Not available: macOS/Xcode, physical iOS/Android hardware, and an Android emulator
   exposing a genuine step-counter sensor.
 - Honest consequence: all EDITOR- and DEVICE-tier gates above remain **UNVERIFIED** even

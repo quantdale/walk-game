@@ -25,6 +25,18 @@ Phase 8  Closed playtest
 Phase 9  Post-MVP expansion
 ```
 
+## Campaign status — 2026-08-23
+
+The Ashfall Basin campaign has moved the one-region slice beyond domain-only gray-box
+coverage: the repository now contains a reusable procedural basin environment, canonical
+stage-driven restoration presentation, responsive Builder/Explore HUD and project UX,
+producer/offline summaries, contextual onboarding, touch controls, NPC/lore interactions,
+and player-facing Expedition lifecycle feedback. The deterministic suite is 113/113
+passing and the static Unity audit passes. Unity editor, PlayMode, Android build, and
+device gates remain **UNVERIFIED** because this environment has no Unity entitlement and
+the installed editor lacks Android Build Support. Region 2 and all multiplayer/combat/
+backend expansion remain out of scope.
+
 ## 3. Phase 0 — Foundation
 
 ### Goal

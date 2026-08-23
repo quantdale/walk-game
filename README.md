@@ -4,8 +4,10 @@ A mobile restoration-builder where **real-world movement restores and advances a
 
 The player begins in gray, ruined regions. Walking generates **Vitality**, which is spent to restore ecosystems, repair buildings, rebuild settlements, and eventually advance the world beyond its former civilization. Restored buildings can be rearranged in a bird's-eye builder view, and the player can enter the same region in third-person Explore mode to walk through what they rebuilt.
 
-This repository now contains a **complete vertical-slice implementation of the Ashfall
-Basin region** (Phases 0-6 systems, content-as-code) with 107 passing domain tests. See
+This repository now contains a **player-facing vertical slice of the Ashfall Basin region**
+(Phases 0-6 systems, content-as-code) with 113 passing domain tests, a procedural basin
+environment, responsive Builder/Explore UI, onboarding, NPC/lore hooks, producer cards,
+and player-facing Expeditions. See
 [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) for the phase-by-phase
 state and what still requires an editor or physical devices.
 
@@ -85,10 +87,11 @@ The current plan intentionally commits to these constraints:
 
 ## Current roadmap target
 
-Phases 0-6 are implemented at vertical-slice level (one region, content-as-code, gray-box
-visuals) and verified by the domain test suite; native providers await on-device
-validation. Next gates, in order: first editor open + Play validation (Phase 0
-acceptance), physical Android/iOS device passes for Phase 4/7 acceptance criteria.
+Phases 0-6 are implemented at vertical-slice level (one region, content-as-code, procedural
+gray-box presentation) and verified by the domain test suite; native providers await
+on-device validation. The next gates are first licensed editor open + Play validation,
+then physical Android/iOS device passes for Phase 4/7 acceptance criteria. These gates are
+explicitly unverified in the current environment.
 
 Architecture decisions made during implementation are recorded under
 [`docs/adr/`](docs/adr).

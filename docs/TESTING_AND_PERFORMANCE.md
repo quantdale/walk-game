@@ -12,6 +12,22 @@ Testing must therefore prioritize:
 4. Mobile lifecycle.
 5. Performance on physical devices.
 
+## 1A. Current campaign evidence
+
+As of 2026-08-23, `dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj`
+passes **113/113** and `scripts/verify-unity-static.ps1` passes the pinned Unity version,
+asset metadata, package invariants, and Bootstrap scene checks. The new player-facing
+state surfaces are covered by `PlayerExperienceTests`, while the existing activity,
+placement, save/recovery, production, permission, and full Ashfall playthrough suites
+remain part of the same automated gate.
+
+The procedural environment kit uses shared materials, property blocks for state tinting,
+static geometry after construction, reused UI rows, and `Physics.OverlapSphereNonAlloc`
+for Explore interaction scans. These are static mobile-readiness measures, not device
+performance measurements. Unity compile/EditMode/PlayMode and FPS, allocation, thermal,
+and battery measurements remain **UNVERIFIED** until a licensed editor and reference
+hardware are available.
+
 ## 2. Test pyramid
 
 ### Unit/EditMode

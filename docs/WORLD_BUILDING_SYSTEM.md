@@ -24,6 +24,12 @@ Each region is a bounded content package with:
 - Audio/lighting profiles by restoration stage.
 - Region-specific content catalog.
 
+Ashfall's current presentation kit is generated from reusable named district anchors so
+the gray-box can be replaced by authored prefabs later without changing IDs or gameplay
+services. It includes a central ruined settlement, dry river/waterworks corridor, dead
+grove and wetland, workshop, greenhouse, research structure, residential cluster,
+transit-gate landmark, authored routes, boundary markers, and story-record spaces.
+
 ### Static versus dynamic data
 
 **Static authored data** belongs in ScriptableObjects/content definitions:
@@ -142,6 +148,13 @@ Advantages:
 Swap entire prefabs using the same canonical building instance data.
 
 Use only if art complexity makes child variants unwieldy.
+
+In the current slice, the environment presenter applies the same canonical-stage rule at
+region scale: stage 0 keeps the basin ash-dark and dry; later stages reveal first-growth
+plants, water, wetland reeds, grove canopy, warmer atmosphere, active gate lighting, and
+ambient life. Explicit environment flags let river/grove/wetland projects show their
+landmark transformation before the next global stage. Reduced motion disables ambient
+particles without changing progression.
 
 ## 8. When movement becomes available
 
