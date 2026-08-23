@@ -41,7 +41,9 @@ namespace WalkGame.App
         public VitalityLedger Ledger { get; private set; }
         public RewardApplier Rewards { get; private set; }
         public RestorationService Restoration { get; private set; }
+        public ExplorationService Exploration { get; private set; }
         public ProductionService Production { get; private set; }
+        public ProductionSummary ResumeProductionSummary { get; private set; } = new ProductionSummary();
         public BuildingPlacementService Placement { get; private set; }
         public ActivityService Activity { get; private set; }
         public IActivityProvider Provider { get; private set; }
@@ -108,6 +110,7 @@ namespace WalkGame.App
             Ledger = new VitalityLedger(Profile, Clock, Events, Log);
             Rewards = new RewardApplier(Profile, Clock, Events, Log);
             Restoration = new RestorationService(Catalog, Profile, Ledger, Rewards, Events, Log);
+            Exploration = new ExplorationService(Catalog, Profile, Events);
             Production = new ProductionService(Catalog, Profile, Rewards, Clock, Log);
             Placement = new BuildingPlacementService(Catalog, Events);
 
@@ -123,7 +126,7 @@ namespace WalkGame.App
 
             EnsureRegionState();
             Production.EnsureProducerStates(Profile.worldState.currentRegionId);
-            Production.AccrueAll(Profile.worldState.currentRegionId); // offline window on resume
+            ResumeProductionSummary = Production.AccrueAllWithSummary(Profile.worldState.currentRegionId); // offline window on resume
 
             Modes.TryTransition(GameMode.MainMenu);
         }

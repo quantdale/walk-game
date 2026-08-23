@@ -12,6 +12,40 @@ namespace WalkGame.Gameplay
         public bool clockAnomaly;
     }
 
+    public struct ProducerStatus
+    {
+        public string producerId;
+        public string buildingInstanceId;
+        public string resourceId;
+        public long storedOutput;
+        public long storageCap;
+        public double ratePerHour;
+        public int upgradeTier;
+        public bool isActive;
+        public bool isFull;
+    }
+
+    public sealed class ProductionSummary
+    {
+        public readonly List<ProductionResult> results = new List<ProductionResult>();
+        public long TotalProduced
+        {
+            get
+            {
+                long total = 0;
+                foreach (var result in results)
+                {
+                    total += result.produced;
+                }
+
+                return total;
+            }
+        }
+
+        public bool HasOfflineCap => results.Exists(result => result.cappedByOfflineWindow);
+        public bool HasClockAnomaly => results.Exists(result => result.clockAnomaly);
+    }
+
         public struct CollectResult
         {
             public string resourceId;
@@ -114,6 +148,59 @@ namespace WalkGame.Gameplay
 
                 Accrue(regionId, producer);
             }
+        }
+
+        public ProductionSummary AccrueAllWithSummary(string regionId)
+        {
+            var summary = new ProductionSummary();
+            var region = _profile.worldState.GetOrCreateRegionState(regionId);
+            foreach (var producer in region.producerStates.Values)
+            {
+                if (producer != null)
+                {
+                    summary.results.Add(Accrue(regionId, producer));
+                }
+            }
+
+            return summary;
+        }
+
+        public List<ProducerStatus> GetStatuses(string regionId)
+        {
+            var statuses = new List<ProducerStatus>();
+            var region = _profile.worldState.GetOrCreateRegionState(regionId);
+            foreach (var producer in region.producerStates.Values)
+            {
+                if (producer == null)
+                {
+                    continue;
+                }
+
+                var definition = _catalog.GetProducer(producer.producerId);
+                if (definition == null)
+                {
+                    continue;
+                }
+
+                bool active = region.buildingStates.TryGetValue(producer.buildingInstanceId, out var building) &&
+                              building != null && building.IsRestored;
+                int tier = Math.Max(1, building?.upgradeTier ?? 0);
+                statuses.Add(new ProducerStatus
+                {
+                    producerId = producer.producerId,
+                    buildingInstanceId = producer.buildingInstanceId,
+                    resourceId = definition.resourceId,
+                    storedOutput = producer.storedOutput,
+                    storageCap = definition.storageCap,
+                    ratePerHour = definition.baseRatePerHour * definition.MultiplierForTier(tier),
+                    upgradeTier = tier,
+                    isActive = active,
+                    isFull = producer.storedOutput >= definition.storageCap,
+                });
+            }
+
+            statuses.Sort((a, b) => string.CompareOrdinal(a.producerId, b.producerId));
+            return statuses;
         }
 
         public CollectResult Collect(string regionId, string producerId)

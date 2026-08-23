@@ -19,14 +19,27 @@ namespace WalkGame.Core
         public HashSet<string> completedProjectIds = new HashSet<string>();
         /// <summary>Projects explicitly unlocked by reward actions (available to start).</summary>
         public HashSet<string> unlockedProjectIds = new HashSet<string>();
+        /// <summary>
+        /// Canonical environment switches. Presentation reads these flags; it never
+        /// infers progression from a material, prefab, or scene-only object.
+        /// </summary>
+        public HashSet<string> environmentFlags = new HashSet<string>();
         public Dictionary<string, BuildingState> buildingStates = new Dictionary<string, BuildingState>();
         public HashSet<string> discoveredLoreIds = new HashSet<string>();
         public HashSet<string> arrivedNpcIds = new HashSet<string>();
         public Dictionary<string, ProducerState> producerStates = new Dictionary<string, ProducerState>();
         public DateTime lastVisitedAtUtc = DateTime.MinValue;
 
+        public bool HasEnvironmentFlag(string flagId)
+        {
+            return !string.IsNullOrEmpty(flagId) &&
+                   ((environmentFlags != null && environmentFlags.Contains(flagId)) ||
+                    (discoveredLoreIds != null && discoveredLoreIds.Contains("flag:" + flagId)));
+        }
+
         public BuildingState GetOrCreateBuildingState(string instanceId, string definitionId)
         {
+            buildingStates = buildingStates ?? new Dictionary<string, BuildingState>();
             if (!buildingStates.TryGetValue(instanceId, out var building))
             {
                 building = new BuildingState

@@ -324,6 +324,81 @@ namespace WalkGame.Content
                 },
             });
 
+            region.npcs.AddRange(new[]
+            {
+                new NpcDefinition
+                {
+                    npcId = "npc.mara_ecologist",
+                    displayNameKey = "Mara, Basin Ecologist",
+                    roleKey = "Wetland keeper",
+                    arrivalPrerequisiteProjectId = "project.ashfall.restore_wetland",
+                    spawnAnchorId = "anchor.wetland",
+                    dialogueKey = "The river remembers its way. Keep moving, and the basin will remember life.",
+                },
+                new NpcDefinition
+                {
+                    npcId = "npc.ivo_historian",
+                    displayNameKey = "Ivo, Gate Historian",
+                    roleKey = "Transit historian",
+                    arrivalPrerequisiteProjectId = "project.ashfall.transit_gate_awaken",
+                    spawnAnchorId = "anchor.transit_gate",
+                    dialogueKey = "The gate was built to carry restoration farther than any one pair of feet.",
+                },
+                new NpcDefinition
+                {
+                    npcId = "npc.bren_builder",
+                    displayNameKey = "Bren, Basin Builder",
+                    roleKey = "Settlement builder",
+                    arrivalPrerequisiteProjectId = "project.ashfall.transit_gate_align",
+                    spawnAnchorId = "anchor.settlement",
+                    dialogueKey = "A repaired place is useful. A place arranged with care becomes home.",
+                },
+            });
+
+            region.loreObjects.AddRange(new[]
+            {
+                new LoreDefinition
+                {
+                    loreId = "lore.ashfall.aqueduct_plaque",
+                    titleKey = "Aqueduct plaque",
+                    bodyKey = "Water was once measured in seasons here. The stone still points uphill.",
+                    prerequisiteProjectId = "project.ashfall.clear_aqueduct_rubble",
+                    anchorId = "anchor.aqueduct",
+                },
+                new LoreDefinition
+                {
+                    loreId = "lore.ashfall.pump_logbook",
+                    titleKey = "Pump station logbook",
+                    bodyKey = "Day 1: the pumps answer. Day 12: a green line has appeared along the river.",
+                    prerequisiteProjectId = "project.ashfall.restore_water_station",
+                    anchorId = "anchor.water_station",
+                },
+                new LoreDefinition
+                {
+                    loreId = "lore.ashfall.riverside_letters",
+                    titleKey = "Riverside letters",
+                    bodyKey = "We left the gate open for whoever could teach the basin to breathe again.",
+                    prerequisiteProjectId = "project.ashfall.refill_river",
+                    anchorId = "anchor.riverside",
+                },
+                new LoreDefinition
+                {
+                    loreId = "lore.ashfall.greenhouse_seeds",
+                    titleKey = "Seed archive",
+                    bodyKey = "A small tin of seeds, labelled for the first rain after ashfall.",
+                    prerequisiteProjectId = "project.ashfall.restore_greenhouse",
+                    anchorId = "anchor.greenhouse",
+                },
+                new LoreDefinition
+                {
+                    loreId = "lore.ashfall.gate_inscription",
+                    titleKey = "Transit gate inscription",
+                    bodyKey = "No road is finished when it reaches a wall. Restore the way, then choose where it leads.",
+                    prerequisiteProjectId = "project.ashfall.transit_gate_awaken",
+                    anchorId = "anchor.transit_gate",
+                },
+            });
+
             BuildProjects(region);
             BuildProducers();
 

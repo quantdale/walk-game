@@ -82,6 +82,31 @@ namespace WalkGame.Activity
         }
 
         /// <summary>
+        /// Claims the live movement window for an Expedition after the provider has
+        /// successfully started. This domain-owned marker prevents a lifecycle poll
+        /// from paying the same movement passively while the session is active.
+        /// </summary>
+        public bool BeginExpedition(SessionType sessionType, DateTime startedAtUtc)
+        {
+            if (_profile.activityState.activeSession != null)
+            {
+                return false;
+            }
+
+            _profile.activityState.activeSession = new ActiveSessionState
+            {
+                sessionType = sessionType,
+                startedAtUtc = startedAtUtc,
+            };
+            return true;
+        }
+
+        public void AbandonExpedition()
+        {
+            _profile.activityState.activeSession = null;
+        }
+
+        /// <summary>
         /// Processes a completed Expedition. Base steps always count; optional bonuses are
         /// gated by trust and capped. Low trust is communicated neutrally by UI, not punished.
         /// Exactly-once policy (campaign S8): a durable per-session identity prevents any

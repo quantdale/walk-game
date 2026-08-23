@@ -17,6 +17,20 @@ namespace WalkGame.Gameplay
     }
 
     /// <summary>
+    /// Player-facing project state. The domain owns the truth; UI can render this
+    /// without duplicating prerequisite or affordability rules.
+    /// </summary>
+    public sealed class RestorationProjectStatus
+    {
+        public RestorationProjectDefinition project;
+        public RestorationFailure failure;
+        public bool IsCompleted => failure == RestorationFailure.AlreadyCompleted;
+        public bool IsAvailable => failure == RestorationFailure.None;
+        public bool IsAffordable => failure != RestorationFailure.InsufficientVitality &&
+                                     failure != RestorationFailure.InsufficientResources;
+    }
+
+    /// <summary>
     /// Validates and commits restoration project transactions (TECHNICAL_ARCHITECTURE 10).
     /// Validate -> deduct -> mark complete -> apply rewards -> advance stage -> persist happens
     /// through one call so a failure cannot leave half-applied state in memory.
@@ -108,6 +122,30 @@ namespace WalkGame.Gameplay
             }
 
             return RestorationFailure.None;
+        }
+
+        public RestorationProjectStatus GetStatus(string projectId)
+        {
+            var failure = Evaluate(projectId, out var project, out _);
+            return new RestorationProjectStatus
+            {
+                project = project,
+                failure = failure,
+            };
+        }
+
+        public List<RestorationProjectStatus> GetStatuses()
+        {
+            var statuses = new List<RestorationProjectStatus>();
+            foreach (var project in _catalog.GetProjectsForRegion(_profile.worldState.currentRegionId))
+            {
+                if (project != null)
+                {
+                    statuses.Add(GetStatus(project.projectId));
+                }
+            }
+
+            return statuses;
         }
 
         public bool TryComplete(string projectId, out RestorationFailure failure)

@@ -137,12 +137,17 @@ namespace WalkGame.App
                 yield break;
             }
 
+            if (!host.Activity.BeginExpedition(type, host.Clock.UtcNow))
+            {
+                yield break;
+            }
+
             // Sessions are simulated instantly for the debug menu; a real Expedition UI
             // would accumulate samples over time instead (ROADMAP Phase 4C).
             debug.SimulateSessionProgress(steps, meters, movingSeconds);
 
             var stopTask = debug.StopSessionAsync();
-            var stopObservation = new TaskObservation<SessionResult>();
+            var stopObservation = new TaskObservation<ActivitySessionResult>();
             var stopObserver = TaskObservation.Observe(stopTask, stopObservation);
             while (!stopObserver.IsCompleted)
             {
@@ -151,10 +156,16 @@ namespace WalkGame.App
 
             if (!HandleFault(stopObservation))
             {
+                host.Activity.AbandonExpedition();
                 yield break;
             }
 
             var result = stopObservation.Value;
+            if (result == null)
+            {
+                host.Activity.AbandonExpedition();
+                yield break;
+            }
             var trust = new TrustEvaluator(RewardPolicy.Default);
             result.trustScore = trust.EvaluateSession(
                 new ActiveSessionState

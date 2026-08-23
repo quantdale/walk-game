@@ -151,4 +151,21 @@ namespace WalkGame.Core
         public string RegionId;
         public string LoreId;
     }
+
+    public struct EnvironmentFlagChanged
+    {
+        public string RegionId;
+        public string FlagId;
+    }
+
+    public struct ProducerActivated
+    {
+        public string RegionId;
+        public string ProducerId;
+    }
+
+    public struct OnboardingStepChanged
+    {
+        public int Step;
+    }
 }

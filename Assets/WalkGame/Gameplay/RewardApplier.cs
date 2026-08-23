@@ -74,7 +74,14 @@ namespace WalkGame.Gameplay
                     break;
 
                 case RewardActionKind.SetEnvironmentFlag:
-                    region.discoveredLoreIds.Add("flag:" + action.targetId);
+                    if (region.environmentFlags.Add(action.targetId))
+                    {
+                        _events.Publish(new EnvironmentFlagChanged
+                        {
+                            RegionId = region.regionId,
+                            FlagId = action.targetId,
+                        });
+                    }
                     break;
 
                 case RewardActionKind.UnlockRegion:

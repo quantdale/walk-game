@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.EventSystems;
 
 namespace WalkGame.World
 {
@@ -18,6 +19,7 @@ namespace WalkGame.World
         [SerializeField] private Vector2 areaBounds = new Vector2(34f, 34f);
 
         public System.Action<WalkGame.World.BuildingActor> BuildingTapped;
+        public System.Action<Vector3> GroundTapped;
 
         public Camera CameraComponent => cameraComponent != null ? cameraComponent : GetComponent<Camera>();
 
@@ -28,6 +30,8 @@ namespace WalkGame.World
         private Vector2 _previousPointerPos;
         private bool _dragging;
         private float _previousPinchDistance;
+
+        public bool IsDragging => _dragging;
 
         private void Awake()
         {
@@ -52,44 +56,53 @@ namespace WalkGame.World
         private void HandleTouchAndMouse()
         {
             var touchscreen = Touchscreen.current;
-            if (touchscreen != null && touchscreen.primaryTouch.press.isPressed)
+            if (touchscreen != null)
             {
+                var primary = touchscreen.primaryTouch;
                 var pos = touchscreen.primaryTouch.position.ReadValue();
-                if (touchscreen.secondaryTouch.isPressed)
-                {
-                    // Pinch zoom with two touches.
-                    float pinch = Mathf.Abs(touchscreen.primaryTouch.position.ReadValue().x -
-                                            touchscreen.secondaryTouch.position.ReadValue().x);
-                    if (_previousPinchDistance > 0f)
-                    {
-                        _distance = Mathf.Clamp(_distance - (pinch - _previousPinchDistance) * zoomSpeed * 0.05f, minZoom, maxZoom);
-                    }
-
-                    _previousPinchDistance = pinch;
-                    return;
-                }
-
-                _previousPinchDistance = 0f;
-
-                if (touchscreen.primaryTouch.press.wasPressedThisFrame)
+                if (primary.press.wasPressedThisFrame)
                 {
                     _previousPointerPos = pos;
                     _dragging = false;
                 }
-                else
+
+                if (primary.press.isPressed)
                 {
+                    if (touchscreen.secondaryTouch.isPressed)
+                    {
+                        // Pinch zoom with two touches. Use the full screen-space
+                        // distance so portrait and landscape behave consistently.
+                        float pinch = Vector2.Distance(
+                            primary.position.ReadValue(),
+                            touchscreen.secondaryTouch.position.ReadValue());
+                        if (_previousPinchDistance > 0f)
+                        {
+                            _distance = Mathf.Clamp(_distance - (pinch - _previousPinchDistance) * zoomSpeed * 0.05f, minZoom, maxZoom);
+                        }
+
+                        _previousPinchDistance = pinch;
+                        return;
+                    }
+
+                    _previousPinchDistance = 0f;
                     var delta = pos - _previousPointerPos;
-                    if (delta.sqrMagnitude > 1f)
+                    if (delta.sqrMagnitude > 4f)
                     {
                         _dragging = true;
                         Pan(delta);
                         _previousPointerPos = pos;
                     }
-                    else if (touchscreen.primaryTouch.press.wasReleasedThisFrame && !_dragging)
+                }
+
+                if (primary.press.wasReleasedThisFrame)
+                {
+                    if (!_dragging)
                     {
-                        TapAt(pos);
-                        _dragging = false;
+                        TapAt(pos, primary.touchId.ReadValue());
                     }
+
+                    _dragging = false;
+                    _previousPinchDistance = 0f;
                 }
 
                 return;
@@ -109,20 +122,25 @@ namespace WalkGame.World
             if (mouse.leftButton.isPressed)
             {
                 var pos = mouse.position.ReadValue();
+                if (mouse.leftButton.wasPressedThisFrame)
+                {
+                    _previousPointerPos = pos;
+                    _dragging = false;
+                }
+
                 var delta = pos - _previousPointerPos;
-                if (delta.sqrMagnitude > 0.5f)
+                if (delta.sqrMagnitude > 4f)
                 {
                     _dragging = true;
                     Pan(delta);
+                    _previousPointerPos = pos;
                 }
-
-                _previousPointerPos = pos;
             }
             else if (mouse.leftButton.wasReleasedThisFrame)
             {
                 if (!_dragging)
                 {
-                    TapAt(mouse.position.ReadValue());
+                    TapAt(mouse.position.ReadValue(), -1);
                 }
 
                 _dragging = false;
@@ -138,10 +156,15 @@ namespace WalkGame.World
             _focusPoint += forward * (screenDelta.y * panSpeed * 0.02f * _distance / 30f);
         }
 
-        private void TapAt(Vector2 screenPosition)
+        private void TapAt(Vector2 screenPosition, int pointerId)
         {
             var cam = CameraComponent;
             if (cam == null || BuildingTapped == null)
+            {
+                return;
+            }
+
+            if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject(pointerId))
             {
                 return;
             }
@@ -155,8 +178,17 @@ namespace WalkGame.World
                     BuildingTapped.Invoke(actor);
                     return;
                 }
+
+                GroundTapped?.Invoke(hit.point);
+                BuildingTapped.Invoke(null);
+                return;
             }
 
+            var ground = new Plane(Vector3.up, Vector3.zero);
+            if (ground.Raycast(ray, out var distance))
+            {
+                GroundTapped?.Invoke(ray.GetPoint(distance));
+            }
             BuildingTapped.Invoke(null);
         }
 
@@ -169,6 +201,12 @@ namespace WalkGame.World
         public void SetOrbitYaw(float yawDegrees)
         {
             _orbitYaw = yawDegrees;
+        }
+
+        public void SetAreaBounds(Vector2 bounds)
+        {
+            areaBounds = bounds;
+            _focusPoint = new Vector3(bounds.x * 0.5f, 0f, bounds.y * 0.5f);
         }
 
         private void ApplyTransform()

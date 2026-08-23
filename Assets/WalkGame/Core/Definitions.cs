@@ -153,6 +153,7 @@ namespace WalkGame.Core
         /// <summary>Project that must complete before this NPC arrives.</summary>
         public string arrivalPrerequisiteProjectId = string.Empty;
         public string spawnAnchorId = string.Empty;
+        public string dialogueKey = string.Empty;
     }
 
     public sealed class LoreDefinition
@@ -162,6 +163,7 @@ namespace WalkGame.Core
         public string bodyKey = string.Empty;
         /// <summary>Optional project that must be complete before the lore object is discoverable.</summary>
         public string prerequisiteProjectId = string.Empty;
+        public string anchorId = string.Empty;
     }
 
     public sealed class MilestoneDefinition

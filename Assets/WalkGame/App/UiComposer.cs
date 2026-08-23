@@ -5,6 +5,7 @@ using UnityEngine;
 using WalkGame.Activity;
 using WalkGame.Core;
 using WalkGame.Gameplay;
+using WalkGame.Persistence;
 using WalkGame.UI;
 using WalkGame.World;
 
@@ -22,8 +23,11 @@ namespace WalkGame.App
         private DebugMenuController _debugMenu;
         private ActivityTicker _ticker;
         private AppFlowController _flow;
+        private ExpeditionController _expedition;
+        private FeedbackController _feedback;
         private MotionPermissionCoordinator _motionPermissions;
         private bool _permissionRequestInFlight;
+        private string _resumeProductionMessage = string.Empty;
 
         public void Compose(AppFlowController flow, ActivityTicker ticker)
         {
@@ -31,6 +35,19 @@ namespace WalkGame.App
             _ticker = ticker;
 
             var host = GameHost.Current;
+
+            var feedbackGo = new GameObject("FeedbackController");
+            feedbackGo.transform.SetParent(transform, false);
+            _feedback = feedbackGo.AddComponent<FeedbackController>();
+            _feedback.Bind(host.Profile);
+
+            var expeditionGo = new GameObject("ExpeditionController");
+            expeditionGo.transform.SetParent(transform, false);
+            _expedition = expeditionGo.AddComponent<ExpeditionController>();
+            if (host.ResumeProductionSummary != null && host.ResumeProductionSummary.TotalProduced > 0)
+            {
+                _resumeProductionMessage = $"While you were away, restored systems prepared {host.ResumeProductionSummary.TotalProduced:N0} materials to collect.";
+            }
 
             var hudGo = new GameObject("Hud");
             hudGo.transform.SetParent(transform, false);
@@ -47,8 +64,37 @@ namespace WalkGame.App
                 ToggleExploreRequested = ToggleMode,
                 GetCollectables = GetCollectables,
                 CollectProducerRequested = CollectProducer,
+                CollectAllRequested = CollectAll,
+                GetProducerStatuses = GetProducerStatuses,
+                GetNextGoal = GetNextGoal,
+                GetBuilderSelection = _flow.GetBuilderSelection,
+                BeginBuildingMoveRequested = _flow.BeginSelectedBuildingMove,
+                RotateBuildingRequested = _flow.RotateSelectedBuilding,
+                ConfirmBuildingMoveRequested = _flow.ConfirmBuildingMove,
+                CancelBuildingMoveRequested = _flow.CancelBuildingMove,
+                ResetBuildingPreviewRequested = _flow.ResetBuildingPreview,
+                ExploreMoveInputChanged = _flow.SetExploreMoveInput,
+                GetInteractionPrompt = _flow.GetInteractionPrompt,
+                InteractRequested = _flow.Interact,
+                StartWalkExpeditionRequested = () => StartExpedition(SessionType.Walk),
+                StartRunExpeditionRequested = () => StartExpedition(SessionType.Run),
+                FinishExpeditionRequested = FinishExpedition,
+                IsExpeditionActive = () => _expedition.IsActive,
+                GetExpeditionStatus = () => _expedition.StatusMessage,
+                GetExpeditionProgress = GetExpeditionProgress,
                 GetMotionPermission = () => _motionPermissions.CurrentState,
                 EnableMotionAccessRequested = BeginMotionPermissionRequest,
+                GetOnboardingMessage = GetOnboardingMessage,
+                IsOnboardingVisible = IsOnboardingVisible,
+                AdvanceOnboardingRequested = AdvanceOnboarding,
+                DismissOnboardingRequested = DismissOnboarding,
+                GetAudioSettings = () => _feedback.GetSettingsSummary(),
+                ToggleSettingsRequested = () => _hud.ToggleSettings(),
+                IsSettingsVisible = () => _hud.IsSettingsVisible,
+                ToggleHapticsRequested = ToggleHaptics,
+                AdjustMasterVolumeRequested = delta => AdjustAudioSetting(delta, AudioSetting.Master),
+                AdjustMusicVolumeRequested = delta => AdjustAudioSetting(delta, AudioSetting.Music),
+                AdjustEffectsVolumeRequested = delta => AdjustAudioSetting(delta, AudioSetting.Effects),
             });
 
             var projectsGo = new GameObject("ProjectPanel");
@@ -105,11 +151,23 @@ namespace WalkGame.App
             host.Events.Subscribe<ProjectCompleted>(_ => RefreshAll());
             host.Events.Subscribe<BuildingRestored>(_ => RefreshAll());
             host.Events.Subscribe<RegionStageChanged>(_ => RefreshAll());
+            host.Events.Subscribe<EnvironmentFlagChanged>(_ => RefreshAll());
+            host.Events.Subscribe<LoreDiscovered>(_ => RefreshAll());
+            host.Events.Subscribe<ProjectCompleted>(_ => _feedback.Play(FeedbackCue.Restoration));
+            host.Events.Subscribe<VitalitySpent>(_ => _feedback.Play(FeedbackCue.Restoration));
+            host.Events.Subscribe<RegionStageChanged>(_ => _feedback.Play(FeedbackCue.Milestone));
+            host.Events.Subscribe<ActivityMilestoneReached>(_ => _feedback.Play(FeedbackCue.Milestone));
+            host.Events.Subscribe<LoreDiscovered>(_ => _feedback.Play(FeedbackCue.Lore));
+            host.Events.Subscribe<ModeChanged>(_ => _feedback.Play(FeedbackCue.ModeSwitch));
+            _flow.PlacementFeedback += OnPlacementFeedback;
 
             if (_ticker != null)
             {
                 _ticker.ActivityProcessed += RefreshAll;
             }
+
+            _flow.PresentationChanged += RefreshAll;
+            _expedition.Changed += RefreshAll;
 
             RefreshAll();
         }
@@ -151,10 +209,15 @@ namespace WalkGame.App
                 yield break;
             }
 
+            if (!host.Activity.BeginExpedition(SessionType.Walk, host.Clock.UtcNow))
+            {
+                yield break;
+            }
+
             debug.SimulateVehicleDrive(minutes: 30);
 
             var stopTask = debug.StopSessionAsync();
-            var stopObservation = new TaskObservation<SessionResult>();
+            var stopObservation = new TaskObservation<ActivitySessionResult>();
             var stopObserver = TaskObservation.Observe(stopTask, stopObservation);
             while (!stopObserver.IsCompleted)
             {
@@ -163,10 +226,16 @@ namespace WalkGame.App
 
             if (stopObservation.IsFaulted || stopObservation.IsCanceled)
             {
+                host.Activity.AbandonExpedition();
                 yield break;
             }
 
             var result = stopObservation.Value;
+            if (result == null)
+            {
+                host.Activity.AbandonExpedition();
+                yield break;
+            }
             var trust = new TrustEvaluator(RewardPolicy.Default);
             result.trustScore = trust.EvaluateSession(new ActiveSessionState
             {
@@ -202,8 +271,233 @@ namespace WalkGame.App
             }
 
             host.Persist();
+            _feedback.Play(FeedbackCue.Collection);
             _flow.Presenter?.Refresh();
             RefreshAll();
+        }
+
+        private void CollectAll()
+        {
+            var host = GameHost.Current;
+            if (host == null)
+            {
+                return;
+            }
+
+            var results = host.Production.CollectAll(host.Profile.worldState.currentRegionId);
+            if (results.Count == 0)
+            {
+                return;
+            }
+
+            host.Persist();
+            _feedback.Play(FeedbackCue.Collection);
+            _flow.Presenter?.Refresh();
+            RefreshAll();
+        }
+
+        private IReadOnlyList<ProducerStatus> GetProducerStatuses()
+        {
+            var host = GameHost.Current;
+            if (host == null)
+            {
+                return Array.Empty<ProducerStatus>();
+            }
+
+            host.Production.AccrueAll(host.Profile.worldState.currentRegionId);
+            return host.Production.GetStatuses(host.Profile.worldState.currentRegionId);
+        }
+
+        private string GetExpeditionProgress()
+        {
+            if (_expedition == null || !_expedition.IsActive)
+            {
+                return _expedition != null && !string.IsNullOrEmpty(_expedition.LastRewardMessage)
+                    ? _expedition.LastRewardMessage + " · optional bonuses are bounded."
+                    : "Optional · base steps count; performance bonuses are bounded.";
+            }
+
+            var sample = _expedition.LatestSample;
+            double minutes = Math.Max(0d, sample.movingSeconds) / 60d;
+            return $"{sample.accumulatedSteps:N0} steps · {sample.accumulatedDistanceMeters / 1000d:0.0} km · {minutes:0} min moving";
+        }
+
+        private string GetNextGoal()
+        {
+            var host = GameHost.Current;
+            if (host == null)
+            {
+                return string.Empty;
+            }
+
+            if (host.LastSaveResult == SaveLoadResult.RecoveredFromBackup)
+            {
+                return "Recovered your last good save. Your progress is safe; keep playing normally.";
+            }
+
+            if (host.LastSaveResult == SaveLoadResult.Failed || host.LastSaveResult == SaveLoadResult.IncompatibleSchema)
+            {
+                return "Save recovery needs attention. Your current session is still playable; do not uninstall while diagnostics are reviewed.";
+            }
+
+            if (!string.IsNullOrEmpty(_resumeProductionMessage))
+            {
+                var resumeMessage = _resumeProductionMessage;
+                _resumeProductionMessage = string.Empty;
+                return resumeMessage;
+            }
+
+            var statuses = host.Restoration.GetStatuses();
+            foreach (var status in statuses)
+            {
+                if (status.project == null || status.failure == RestorationFailure.AlreadyCompleted)
+                {
+                    continue;
+                }
+
+                if (status.failure == RestorationFailure.None)
+                {
+                    return $"Next goal: restore {FriendlyProjectTitle(status.project.titleKey)} — the basin changes immediately.";
+                }
+
+                if (status.failure == RestorationFailure.InsufficientVitality)
+                {
+                    return $"Next goal: walk for {status.project.vitalityCost:N0} Vitality to restore {FriendlyProjectTitle(status.project.titleKey)}.";
+                }
+            }
+
+            return "Next goal: collect restored-system output, then inspect the next locked project.";
+        }
+
+        private bool IsOnboardingVisible()
+        {
+            return GameHost.Current != null && !GameHost.Current.Profile.settings.onboardingCompleted;
+        }
+
+        private string GetOnboardingMessage()
+        {
+            var host = GameHost.Current;
+            if (host == null)
+            {
+                return string.Empty;
+            }
+
+            var profile = host.Profile;
+            var region = profile.worldState.GetOrCreateRegionState(profile.worldState.currentRegionId);
+            int step = profile.settings.onboardingStep;
+            if (step < 2 && profile.lifetimeAcceptedSteps > 0) step = profile.settings.onboardingStep = 2;
+            if (step < 3 && region.completedProjectIds.Count > 0) step = profile.settings.onboardingStep = 3;
+            if (step < 4 && HasRestoredProducer(region)) step = profile.settings.onboardingStep = 4;
+            if (step < 5 && HasMovedBuilding(region)) step = profile.settings.onboardingStep = 5;
+            if (step < 6 && host.Modes.Current == GameMode.ExploreMode) step = profile.settings.onboardingStep = 6;
+
+            switch (step)
+            {
+                case 0: return "Ashfall Basin is silent and broken. Your movement can bring it back to life.";
+                case 1: return "Walk in the real world to earn Vitality. You can build and explore even before motion access is ready.";
+                case 2: return "Vitality is the basin's spark. Open a project on the left and restore the first useful system.";
+                case 3: return "Restored buildings keep working while you are away. Collect their output when you return.";
+                case 4: return "This settlement is yours. Select a restored building, move it to a clear cell, and confirm the placement.";
+                case 5: return "Enter Explore to walk through the same arrangement you built and find the basin's records.";
+                default: return "The loop is yours now: move, restore, arrange, collect, and explore. Keep the next landmark in sight.";
+            }
+        }
+
+        private void AdvanceOnboarding()
+        {
+            var host = GameHost.Current;
+            if (host == null)
+            {
+                return;
+            }
+
+            host.Profile.settings.onboardingStep++;
+            if (host.Profile.settings.onboardingStep >= 6)
+            {
+                host.Profile.settings.onboardingCompleted = true;
+            }
+
+            host.Persist();
+            RefreshAll();
+        }
+
+        private void DismissOnboarding()
+        {
+            var host = GameHost.Current;
+            if (host == null) return;
+            host.Profile.settings.onboardingCompleted = true;
+            host.Persist();
+            RefreshAll();
+        }
+
+        private void StartExpedition(SessionType type)
+        {
+            _feedback.Play(FeedbackCue.ExpeditionStart);
+            _expedition.StartExpedition(type);
+        }
+
+        private void FinishExpedition()
+        {
+            _feedback.Play(FeedbackCue.ExpeditionFinish);
+            _expedition.FinishExpedition();
+        }
+
+        private void OnPlacementFeedback(PlacementFailure failure)
+        {
+            _feedback.Play(failure == PlacementFailure.None
+                ? FeedbackCue.PlacementConfirm
+                : FeedbackCue.PlacementInvalid);
+        }
+
+        private void ToggleHaptics()
+        {
+            _feedback.ToggleHaptics();
+            GameHost.Current?.Persist();
+            RefreshAll();
+        }
+
+        private enum AudioSetting
+        {
+            Master,
+            Music,
+            Effects,
+        }
+
+        private void AdjustAudioSetting(float delta, AudioSetting setting)
+        {
+            switch (setting)
+            {
+                case AudioSetting.Master: _feedback.AdjustMaster(delta); break;
+                case AudioSetting.Music: _feedback.AdjustMusic(delta); break;
+                case AudioSetting.Effects: _feedback.AdjustEffects(delta); break;
+            }
+
+            GameHost.Current?.Persist();
+            RefreshAll();
+        }
+
+        private static bool HasRestoredProducer(RegionState region)
+        {
+            foreach (var producer in region.producerStates.Values)
+            {
+                if (producer != null && region.buildingStates.TryGetValue(producer.buildingInstanceId, out var building) && building.IsRestored)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private static bool HasMovedBuilding(RegionState region)
+        {
+            foreach (var building in region.buildingStates.Values)
+            {
+                if (building != null && building.placement.placementVersion > 0)
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         /// <summary>
@@ -264,24 +558,104 @@ namespace WalkGame.App
         {
             var host = GameHost.Current;
             var views = new List<RestorationProjectView>();
+            var region = host.Profile.worldState.GetOrCreateRegionState(host.Profile.worldState.currentRegionId);
             foreach (var project in host.Catalog.GetProjectsForRegion(host.Profile.worldState.currentRegionId))
             {
                 string resourceCost = string.Empty;
                 foreach (var cost in project.resourceCosts)
                 {
-                    resourceCost += $"{cost.Key.Replace("resource.", string.Empty)} {cost.Value} ";
+                    resourceCost += $"{HumanizeId(cost.Key)} {cost.Value} ";
+                }
+
+                string prerequisites = string.Empty;
+                foreach (var prerequisite in project.prerequisiteProjectIds)
+                {
+                    foreach (var candidate in host.Catalog.GetProjectsForRegion(project.regionId))
+                    {
+                        if (candidate.projectId == prerequisite)
+                        {
+                            prerequisites += FriendlyProjectTitle(candidate.titleKey) + ", ";
+                            break;
+                        }
+                    }
+                }
+
+                bool affordable = host.Profile.vitalityBalance >= project.vitalityCost;
+                foreach (var cost in project.resourceCosts)
+                {
+                    host.Profile.resources.TryGetValue(cost.Key, out var owned);
+                    affordable &= owned >= cost.Value;
                 }
 
                 views.Add(new RestorationProjectView
                 {
                     ProjectId = project.projectId,
-                    Title = project.titleKey.Replace('.', ' '),
+                    Title = FriendlyProjectTitle(project.titleKey),
+                    Category = project.category.ToString(),
+                    Description = FriendlyProjectDescription(project.descriptionKey),
                     VitalityCost = project.vitalityCost,
                     ResourceCost = resourceCost.TrimEnd(),
+                    Prerequisites = prerequisites.TrimEnd(' ', ','),
+                    RewardSummary = BuildRewardSummary(project),
+                    Completed = region.completedProjectIds.Contains(project.projectId),
+                    Affordable = affordable,
                 });
             }
 
             return views;
+        }
+
+        private static string BuildRewardSummary(RestorationProjectDefinition project)
+        {
+            var rewards = new List<string>();
+            foreach (var reward in project.rewardActions)
+            {
+                if (reward == null) continue;
+                switch (reward.kind)
+                {
+                    case RewardActionKind.SetBuildingRestored: rewards.Add("restore " + HumanizeId(reward.targetId)); break;
+                    case RewardActionKind.SetEnvironmentFlag: rewards.Add("change the environment"); break;
+                    case RewardActionKind.AddRegionScore: rewards.Add("+" + reward.amount + " " + reward.targetId); break;
+                    case RewardActionKind.GrantResource: rewards.Add("grant " + HumanizeId(reward.secondaryId)); break;
+                    case RewardActionKind.UnlockNpc: rewards.Add("bring a new NPC"); break;
+                    case RewardActionKind.DiscoverLore: rewards.Add("reveal a story record"); break;
+                    default: break;
+                }
+            }
+
+            return rewards.Count == 0 ? "advance the basin" : string.Join(", ", rewards);
+        }
+
+        private static string FriendlyProjectTitle(string value)
+        {
+            return FriendlyKey(value, "title");
+        }
+
+        private static string FriendlyProjectDescription(string value)
+        {
+            return FriendlyKey(value, "desc");
+        }
+
+        private static string FriendlyKey(string value, string suffix)
+        {
+            if (string.IsNullOrEmpty(value)) return string.Empty;
+            string trimmed = value;
+            if (trimmed.EndsWith("." + suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                trimmed = trimmed.Substring(0, trimmed.Length - suffix.Length - 1);
+            }
+            int lastDot = trimmed.LastIndexOf('.');
+            string text = lastDot >= 0 ? trimmed.Substring(lastDot + 1) : trimmed;
+            return HumanizeId(text);
+        }
+
+        private static string HumanizeId(string value)
+        {
+            if (string.IsNullOrEmpty(value)) return string.Empty;
+            int lastDot = value.LastIndexOf('.');
+            string text = lastDot >= 0 ? value.Substring(lastDot + 1) : value;
+            text = text.Replace('_', ' ').Replace('-', ' ');
+            return text.Length == 0 ? text : char.ToUpperInvariant(text[0]) + text.Substring(1);
         }
 
         private bool TryCompleteProject(string projectId)
@@ -314,6 +688,7 @@ namespace WalkGame.App
             region.unlockedProjectIds.Clear();
             region.arrivedNpcIds.Clear();
             region.discoveredLoreIds.Clear();
+            region.environmentFlags.Clear();
             region.restorationStage = 0;
             region.ecologyScore = region.infrastructureScore = region.communityScore = region.knowledgeScore = 0;
             foreach (var instance in host.Catalog.Ashfall.defaultBuildingInstances)

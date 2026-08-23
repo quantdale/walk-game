@@ -45,11 +45,19 @@ namespace WalkGame.Core
 
         public bool TryGetRegionState(string regionId, out RegionState regionState)
         {
+            if (regionStates == null)
+            {
+                regionState = null;
+                return false;
+            }
+
             return regionStates.TryGetValue(regionId ?? string.Empty, out regionState);
         }
 
         public RegionState GetOrCreateRegionState(string regionId)
         {
+            regionStates = regionStates ?? new Dictionary<string, RegionState>();
+            regionId = regionId ?? string.Empty;
             if (!regionStates.TryGetValue(regionId, out var regionState))
             {
                 regionState = new RegionState { regionId = regionId };
@@ -73,5 +81,12 @@ namespace WalkGame.Core
     {
         public bool debugToolsEnabled;
         public bool expeditionLocationOptIn;
+        public float masterAudioVolume = 1f;
+        public float musicVolume = 0.8f;
+        public float effectsVolume = 1f;
+        public bool hapticsEnabled = true;
+        public bool reducedMotion;
+        public bool onboardingCompleted;
+        public int onboardingStep;
     }
 }

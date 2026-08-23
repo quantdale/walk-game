@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
+using System;
 
 namespace WalkGame.World
 {
@@ -17,8 +18,19 @@ namespace WalkGame.World
         [SerializeField] private Transform followCamera;
         [SerializeField] private Vector3 cameraOffset = new Vector3(0f, 6f, -8f);
         [SerializeField] private Vector2 regionBounds = new Vector2(31f, 31f);
+        [SerializeField] private float acceleration = 16f;
+        [SerializeField] private float deceleration = 20f;
 
         private CharacterController _controller;
+        private Vector2 _virtualInput;
+        private Vector3 _velocity;
+        private float _verticalVelocity;
+        private float _interactionTimer;
+        private readonly Collider[] _interactionHits = new Collider[16];
+
+        public event Action InteractionChanged;
+        public NpcActor NearbyNpc { get; private set; }
+        public LoreActor NearbyLore { get; private set; }
 
         public void SetBounds(Vector2 bounds)
         {
@@ -37,6 +49,25 @@ namespace WalkGame.World
             followCamera = cameraTransform;
         }
 
+        public void SetVirtualInput(Vector2 input)
+        {
+            _virtualInput = Vector2.ClampMagnitude(input, 1f);
+        }
+
+        public void Interact()
+        {
+            if (NearbyNpc != null)
+            {
+                InteractionChanged?.Invoke();
+                return;
+            }
+
+            if (NearbyLore != null)
+            {
+                InteractionChanged?.Invoke();
+            }
+        }
+
         private void Awake()
         {
             _controller = GetComponent<CharacterController>();
@@ -44,12 +75,11 @@ namespace WalkGame.World
 
         private void Update()
         {
-            Vector2 input = Vector2.zero;
+            Vector2 input = _virtualInput;
             var keyboard = Keyboard.current;
             var gamepad = Gamepad.current;
-            var touchscreen = Touchscreen.current;
 
-            if (keyboard != null)
+            if (keyboard != null && input.sqrMagnitude < 0.01f)
             {
                 if (keyboard.wKey.isPressed || keyboard.upArrowKey.isPressed) { input.y += 1f; }
                 if (keyboard.sKey.isPressed || keyboard.downArrowKey.isPressed) { input.y -= 1f; }
@@ -57,22 +87,10 @@ namespace WalkGame.World
                 if (keyboard.dKey.isPressed || keyboard.rightArrowKey.isPressed) { input.x += 1f; }
             }
 
-            if (gamepad != null)
+            if (gamepad != null && input.sqrMagnitude < 0.01f)
             {
                 var stick = gamepad.leftStick.ReadValue();
                 input += stick;
-            }
-
-            if (touchscreen != null && touchscreen.primaryTouch.press.isPressed)
-            {
-                // Simple mobile drag-to-walk: touch position relative to screen center.
-                var pos = touchscreen.primaryTouch.position.ReadValue();
-                var center = new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
-                var delta = pos - center;
-                input = delta.sqrMagnitude > 100f
-                    ? new Vector2(delta.x / (Screen.width * 0.35f), delta.y / (Screen.height * 0.35f))
-                    : Vector2.zero;
-                input = Vector2.ClampMagnitude(input, 1f);
             }
 
             bool running = keyboard != null && (keyboard.leftShiftKey.isPressed || keyboard.rightShiftKey.isPressed);
@@ -98,7 +116,16 @@ namespace WalkGame.World
                 move.Normalize();
             }
 
-            _controller.Move(move * (speed * Time.deltaTime) + Physics.gravity * Time.deltaTime);
+            Vector3 desiredVelocity = move * speed;
+            float response = move.sqrMagnitude > 0.01f ? acceleration : deceleration;
+            _velocity = Vector3.MoveTowards(_velocity, desiredVelocity, response * Time.deltaTime);
+            if (_controller.isGrounded && _verticalVelocity < 0f)
+            {
+                _verticalVelocity = -1f;
+            }
+
+            _verticalVelocity += Physics.gravity.y * Time.deltaTime;
+            _controller.Move((_velocity + Vector3.up * _verticalVelocity) * Time.deltaTime);
 
             if (move.sqrMagnitude > 0.01f)
             {
@@ -108,6 +135,7 @@ namespace WalkGame.World
 
             ClampToRegion();
             FollowWithCamera();
+            ScanForInteractions();
         }
 
         private void ClampToRegion()
@@ -130,8 +158,60 @@ namespace WalkGame.World
                 return;
             }
 
-            followCamera.position = transform.position + cameraOffset;
-            followCamera.LookAt(transform.position + Vector3.up * 1.5f);
+            Vector3 target = transform.position + Vector3.up * 1.5f;
+            Vector3 desired = transform.position + cameraOffset;
+            var direction = desired - target;
+            if (Physics.Raycast(target, direction.normalized, out var hit, direction.magnitude, ~0, QueryTriggerInteraction.Ignore) &&
+                !hit.transform.IsChildOf(transform))
+            {
+                desired = hit.point - direction.normalized * 0.25f;
+            }
+
+            followCamera.position = Vector3.Lerp(followCamera.position, desired, 1f - Mathf.Exp(-10f * Time.deltaTime));
+            followCamera.LookAt(target);
+        }
+
+        private void ScanForInteractions()
+        {
+            _interactionTimer -= Time.deltaTime;
+            if (_interactionTimer > 0f)
+            {
+                return;
+            }
+
+            _interactionTimer = 0.25f;
+            NpcActor nearestNpc = null;
+            LoreActor nearestLore = null;
+            float npcDistance = float.MaxValue;
+            float loreDistance = float.MaxValue;
+            int count = Physics.OverlapSphereNonAlloc(transform.position + Vector3.up, 2.5f, _interactionHits,
+                ~0, QueryTriggerInteraction.Collide);
+            for (int i = 0; i < count; i++)
+            {
+                var hit = _interactionHits[i];
+                if (hit == null) continue;
+                float distance = (hit.transform.position - transform.position).sqrMagnitude;
+                var npc = hit.GetComponentInParent<NpcActor>();
+                if (npc != null && distance < npcDistance)
+                {
+                    nearestNpc = npc;
+                    npcDistance = distance;
+                }
+
+                var lore = hit.GetComponentInParent<LoreActor>();
+                if (lore != null && distance < loreDistance)
+                {
+                    nearestLore = lore;
+                    loreDistance = distance;
+                }
+            }
+
+            if (nearestNpc != NearbyNpc || nearestLore != NearbyLore)
+            {
+                NearbyNpc = nearestNpc;
+                NearbyLore = nearestLore;
+                InteractionChanged?.Invoke();
+            }
         }
     }
 }

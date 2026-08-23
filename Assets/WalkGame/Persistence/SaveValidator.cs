@@ -34,6 +34,12 @@ namespace WalkGame.Persistence
             var report = new SaveValidationReport();
             var world = profile.worldState ?? new WorldState();
             profile.worldState = world;
+            profile.resources = profile.resources ?? new System.Collections.Generic.Dictionary<string, long>();
+            profile.recentVitalityTransactions = profile.recentVitalityTransactions ?? new System.Collections.Generic.List<VitalityTransaction>();
+            profile.achievementState = profile.achievementState ?? new AchievementState();
+            profile.settings = profile.settings ?? new PlayerSettings();
+            world.unlockedRegionIds = world.unlockedRegionIds ?? new System.Collections.Generic.HashSet<string>();
+            world.regionStates = world.regionStates ?? new System.Collections.Generic.Dictionary<string, RegionState>();
 
             if (string.IsNullOrEmpty(world.currentRegionId))
             {
@@ -55,6 +61,11 @@ namespace WalkGame.Persistence
             {
                 profile.lifetimeAcceptedSteps = 0;
             }
+
+            profile.settings.masterAudioVolume = Clamp01(profile.settings.masterAudioVolume, 1f);
+            profile.settings.musicVolume = Clamp01(profile.settings.musicVolume, 0.8f);
+            profile.settings.effectsVolume = Clamp01(profile.settings.effectsVolume, 1f);
+            profile.settings.onboardingStep = Math.Max(0, profile.settings.onboardingStep);
 
             foreach (var pair in new System.Collections.Generic.Dictionary<string, long>(profile.resources))
             {
@@ -87,6 +98,14 @@ namespace WalkGame.Persistence
             {
                 return;
             }
+
+            region.completedProjectIds = region.completedProjectIds ?? new System.Collections.Generic.HashSet<string>();
+            region.unlockedProjectIds = region.unlockedProjectIds ?? new System.Collections.Generic.HashSet<string>();
+            region.environmentFlags = region.environmentFlags ?? new System.Collections.Generic.HashSet<string>();
+            region.buildingStates = region.buildingStates ?? new System.Collections.Generic.Dictionary<string, BuildingState>();
+            region.discoveredLoreIds = region.discoveredLoreIds ?? new System.Collections.Generic.HashSet<string>();
+            region.arrivedNpcIds = region.arrivedNpcIds ?? new System.Collections.Generic.HashSet<string>();
+            region.producerStates = region.producerStates ?? new System.Collections.Generic.Dictionary<string, ProducerState>();
 
             foreach (var buildingPair in new System.Collections.Generic.Dictionary<string, BuildingState>(region.buildingStates))
             {
@@ -128,6 +147,16 @@ namespace WalkGame.Persistence
         {
             // Grid coordinates are integers; guard against absurd values from corruption.
             return value >= -100000 && value <= 100000;
+        }
+
+        private static float Clamp01(float value, float fallback)
+        {
+            if (float.IsNaN(value) || float.IsInfinity(value))
+            {
+                return fallback;
+            }
+
+            return Math.Max(0f, Math.Min(1f, value));
         }
     }
 }

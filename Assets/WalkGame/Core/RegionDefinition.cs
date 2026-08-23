@@ -42,6 +42,10 @@ namespace WalkGame.Core
         public int exploreSpawnGridX;
         public int exploreSpawnGridY;
 
+        /// <summary>Authored presentation/content hooks for the contained region.</summary>
+        public List<NpcDefinition> npcs = new List<NpcDefinition>();
+        public List<LoreDefinition> loreObjects = new List<LoreDefinition>();
+
         /// <summary>Number of authored region visual stages (dead -> flourishing).</summary>
         public int visualStageCount = 4;
 
