@@ -1,0 +1,26 @@
+name: domain-tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify-domain:
+    name: Standalone domain suite (.NET)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore + run domain tests
+        shell: pwsh
+        run: ./scripts/verify-domain.ps1
+
+      # Unity compile/EditMode/PlayMode gates require an interactive editor license;
+      # scripts/verify-unity-editmode.ps1 is the documented local equivalent until a
+      # licensed runner exists (see docs/TESTING_AND_PERFORMANCE.md).
