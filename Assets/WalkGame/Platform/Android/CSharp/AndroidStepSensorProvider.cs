@@ -22,6 +22,9 @@ namespace WalkGame.Platform.Android
     ///    Android 10+ and waste the first valid baseline.
     ///  - Permission prompts fire exclusively through RequestMotionPermissionAsync,
     ///    which the UI invokes after explicit user intent (PRIVACY_SAFETY_ANTI_CHEAT 4).
+    ///  - Cumulative-counter folding (NaN guards, reboot re-baselining, plausibility
+    ///    caps, persisted cursors) lives in AndroidCounterReconciler so every rule
+    ///    is domain-testable without hardware.
     /// </summary>
     public sealed class AndroidStepSensorProvider : IActivityProvider
     {
@@ -36,8 +39,8 @@ namespace WalkGame.Platform.Android
         private readonly Log _log;
 
         private readonly IClock _clock;
-        private double _lastRawCounter = double.MinValue;
-        private long _pendingDelta;
+        private readonly AndroidCounterReconciler _reconciler = new AndroidCounterReconciler();
+        private readonly ActivitySyncState _syncState;
         private ActiveSessionState _session;
 
         // Runtime refinement over the native tri-state: once a request round has
@@ -48,19 +51,40 @@ namespace WalkGame.Platform.Android
         private bool _monitoringStarted;
 
         public AndroidStepSensorProvider(IClock clock, Log log = null)
-        : this(clock, null, null, log)
+        : this(clock, null, null, null, log)
+        {
+        }
+
+        /// <summary>Production constructor: seeds counter reconciliation from the
+        /// persisted activity cursor so process restarts do not drop steps.</summary>
+        public AndroidStepSensorProvider(IClock clock, ActivitySyncState syncState, Log log = null)
+        : this(clock, null, null, syncState, log)
         {
         }
 
         public AndroidStepSensorProvider(IClock clock, AndroidJavaObject existingBridge, Log log = null)
-        : this(clock, existingBridge, null, log)
+        : this(clock, existingBridge, null, null, log)
         {
         }
 
-        public AndroidStepSensorProvider(IClock clock, AndroidJavaObject existingBridge, AndroidJavaObject existingActivity, Log log = null)
+        public AndroidStepSensorProvider(
+            IClock clock,
+            AndroidJavaObject existingBridge,
+            AndroidJavaObject existingActivity,
+            ActivitySyncState syncState,
+            Log log = null)
         {
             _log = log ?? Core.Log.Disabled;
             _clock = clock ?? Core.SystemClock.Instance;
+            _syncState = syncState;
+
+            if (_syncState != null)
+            {
+                // Resume from the persisted counter cursor: steps accumulated between
+                // the last save and this process start are credited instead of lost;
+                // a lower live value afterwards is handled as reboot by Fold().
+                _reconciler.SeedFromPersistedCounter(_syncState.androidLastRawStepCounter);
+            }
 
             _bridge = existingBridge ?? new AndroidJavaObject("com.walkgame.sensors.StepSensorBridge");
             if (_bridge == null)
@@ -168,13 +192,10 @@ namespace WalkGame.Platform.Android
                 }
 
                 bool rationaleVisible = ReadRationaleHint();
-                bool answered = current == ActivityPermissionState.Denied || rationaleVisible;
-                if (answered)
+                if (current == ActivityPermissionState.Denied || rationaleVisible)
                 {
                     _completedRequestWithoutGrant = true;
-                    return current == ActivityPermissionState.Denied
-                        ? current
-                        : ActivityPermissionState.Denied;
+                    return ActivityPermissionState.Denied;
                 }
             }
 
@@ -195,21 +216,21 @@ namespace WalkGame.Platform.Android
                 EnsureMonitoringStarted();
                 ConsumeRawCounter();
 
-                if (_pendingDelta <= 0)
+                long pending = _reconciler.DrainPending();
+                if (pending <= 0)
                 {
                     return Task.FromResult<ActivitySnapshot>(null);
                 }
 
-                long steps = System.Math.Max(0, _pendingDelta);
-                _pendingDelta = 0;
-
                 DateTime end = _clock.UtcNow;
+                PersistCursor(end);
+
                 var snapshot = new ActivitySnapshot
                 {
                     providerId = ProviderId,
                     intervalStartUtc = cursor?.lastSuccessfulSyncUtc ?? end.AddMinutes(-30),
                     intervalEndUtc = end,
-                    stepCount = steps,
+                    stepCount = pending,
                     estimatedDistanceMeters = null,
                     sourceType = ActivitySourceType.PhoneSensor,
                     recordingType = ActivityRecordingType.Passive,
@@ -241,12 +262,11 @@ namespace WalkGame.Platform.Android
 
                 EnsureMonitoringStarted();
                 ConsumeRawCounter();
-                long baseline = HasValidBaseline ? (long)_lastRawCounter : 0L;
                 _session = new ActiveSessionState
                 {
                     sessionType = sessionType,
                     startedAtUtc = _clock.UtcNow,
-                    initialStepBaseline = baseline,
+                    initialStepBaseline = _reconciler.HasBaseline ? (long)_reconciler.LastRawCounter.GetValueOrDefault() : 0L,
                 };
                 return Task.FromResult(SessionStartError.None);
             }
@@ -288,29 +308,41 @@ namespace WalkGame.Platform.Android
                 return Task.FromResult<ActivitySessionResult>(null);
             }
 
+            DateTime endUtc = _clock.UtcNow;
+            PersistCursor(endUtc);
             return Task.FromResult(new ActivitySessionResult
             {
                 sessionId = finished.sessionId,
                 type = finished.sessionType,
                 startUtc = finished.startedAtUtc,
-                endUtc = _clock.UtcNow,
+                endUtc = endUtc,
                 acceptedSteps = CurrentSessionSteps(finished),
                 verifiedDistanceMeters = 0, // distance requires the optional location flow (Phase 4C)
-                verifiedMovingSeconds = System.Math.Max(0, (_clock.UtcNow - finished.startedAtUtc).TotalSeconds),
+                verifiedMovingSeconds = System.Math.Max(0, (endUtc - finished.startedAtUtc).TotalSeconds),
                 cadenceConsistency = null,
             });
         }
 
-        private bool HasValidBaseline => _lastRawCounter > double.MinValue && !double.IsInfinity(_lastRawCounter);
-
         private long CurrentSessionSteps(ActiveSessionState session)
         {
-            if (session == null || !session.HasBaseline || !HasValidBaseline)
+            if (session == null || !session.HasBaseline || !_reconciler.HasBaseline)
             {
                 return 0;
             }
 
-            return (long)System.Math.Max(0, _lastRawCounter - session.initialStepBaseline.GetValueOrDefault());
+            double current = _reconciler.LastRawCounter.GetValueOrDefault();
+            return (long)System.Math.Max(0, current - session.initialStepBaseline.GetValueOrDefault());
+        }
+
+        private void PersistCursor(DateTime observedUtc)
+        {
+            if (_syncState == null)
+            {
+                return;
+            }
+
+            _syncState.androidLastRawStepCounter = _reconciler.LastRawCounter;
+            _syncState.androidLastCounterObservedUtc = observedUtc;
         }
 
         private bool IsCounterAvailable()
@@ -363,11 +395,7 @@ namespace WalkGame.Platform.Android
             }
         }
 
-        /// <summary>
-        /// Reads the raw cumulative counter and folds it into the pending delta.
-        /// A decreasing raw counter means reboot/provider reset: re-baseline, never
-        /// produce negative steps (ACTIVITY_REWARD_SYSTEM section 16).
-        /// </summary>
+        /// <summary>Reads one absolute raw sample through the folding state machine.</summary>
         private void ConsumeRawCounter()
         {
             double raw;
@@ -381,37 +409,18 @@ namespace WalkGame.Platform.Android
                 return;
             }
 
-            if (double.IsNaN(raw) || double.IsInfinity(raw))
+            switch (_reconciler.Fold(raw))
             {
-                // No observation yet (bridge initializes to NaN) or a corrupt event:
-                // fail closed, keep the previous baseline untouched.
-                return;
-            }
-
-            if (raw < 0)
-            {
-                _log.Warning($"Negative cumulative step value {raw}; ignored.");
-                return;
-            }
-
-            if (!HasValidBaseline)
-            {
-                // First valid observation after install/process start: establish
-                // baseline without crediting anything.
-                _lastRawCounter = raw;
-                return;
-            }
-
-            if (raw >= _lastRawCounter)
-            {
-                double delta = raw - _lastRawCounter;
-                _pendingDelta += (long)delta;
-                _lastRawCounter = raw;
-            }
-            else
-            {
-                _log.Info("Step counter decreased; treating as reboot and re-baselining.");
-                _lastRawCounter = raw;
+                case CounterFoldOutcome.InvalidSample:
+                    // No observation yet (bridge initializes to NaN) or corrupt event:
+                    // fail closed, previous baseline untouched.
+                    break;
+                case CounterFoldOutcome.Rebaselined:
+                    _log.Info("Step counter decreased; treating as reboot and re-baselining.");
+                    break;
+                case CounterFoldOutcome.AnomalyRebaselined:
+                    _log.Warning("Implausible step-counter jump; re-baselined without crediting.");
+                    break;
             }
         }
     }

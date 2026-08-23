@@ -164,10 +164,14 @@ namespace WalkGame.App
 #if UNITY_ANDROID && !UNITY_EDITOR
             try
             {
-                return new WalkGame.Platform.Android.AndroidStepSensorProvider(Clock);
+                // The profile's activity state seeds the counter reconciler so a
+                // process restart resumes from the persisted raw-counter cursor.
+                return new WalkGame.Platform.Android.AndroidStepSensorProvider(Clock, Profile.activityState, Log);
             }
             catch (Exception ex)
             {
+                // Only genuine bridge/packaging failures land here; missing runtime
+                // permission is a normal provider state handled by the permission UI.
                 Log.Warning($"Android step provider unavailable ({ex.Message}); using debug provider.");
             }
 #elif UNITY_IOS && !UNITY_EDITOR
