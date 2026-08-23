@@ -1,7 +1,10 @@
 #if UNITY_IOS && !UNITY_EDITOR
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
+using AOT;
+using UnityEngine;
 using WalkGame.Activity;
 using WalkGame.Core;
 
@@ -9,35 +12,138 @@ namespace WalkGame.Platform.iOS
 {
     /// <summary>
     /// Core Motion adapter over the narrow WG_* bridge (WalkGamePedometerBridge.mm).
-    /// Historical reconciliation respects the 7-day CMPedometer window and never
-    /// re-credits intervals; reward math stays in C# domain code.
+    /// Historical reconciliation is fully asynchronous: the native side delivers a
+    /// combined steps+distance result through a marshalled callback, so Unity's main
+    /// thread never blocks on a semaphore (campaign S6/S7). Window planning, cursor
+    /// semantics and reward math stay in engine-free C#.
     /// </summary>
     public sealed class IosCoreMotionProvider : IActivityProvider
     {
         public const string ProviderIdValue = "activity.ios.coremotion";
-        private static readonly TimeSpan HistoryWindow = TimeSpan.FromDays(7);
+
+        private static readonly TimeSpan RequestPollTimeout = TimeSpan.FromSeconds(120);
+        private static readonly TimeSpan QueryTimeout = TimeSpan.FromSeconds(10);
+
+        // Marshalled once per process; results arrive on a native serial queue, never
+        // on Unity's main thread, and only touch this dictionary + task sources.
+        private static readonly object PendingGate = new object();
+        private static readonly Dictionary<int, TaskCompletionSource<IosQueryOutcome>> PendingQueries =
+            new Dictionary<int, TaskCompletionSource<IosQueryOutcome>>();
+        private static bool _callbackRegistered;
+        private static int _lastIssuedRequestId;
 
         private readonly object _gate = new object();
+        private readonly IosHistoryWindowPlanner _planner = new IosHistoryWindowPlanner();
         private ActiveSessionState _session;
-        private DateTime _sessionWallClockStart;
         private double _sessionStartLiveSteps;
 
         public IosCoreMotionProvider(IClock clock)
         {
             Clock = clock ?? throw new ArgumentNullException(nameof(clock));
+            RegisterCallbackOnce();
         }
 
         public IClock Clock { get; }
 
         public string ProviderId => ProviderIdValue;
 
-        private static readonly TimeSpan RequestPollTimeout = TimeSpan.FromSeconds(120);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate void QueryResultCallback(int requestId, double steps, double distance, int errorCode);
+
+        [DllImport("__Internal")]
+        private static extern void WG_SetQueryResultCallback(QueryResultCallback callback);
+
+        [DllImport("__Internal")]
+        private static extern int WG_QueryPedometerAsync(double startUnix, double endUnix);
+
+        [DllImport("__Internal")] private static extern int WG_IsPedometerAvailable();
+        [DllImport("__Internal")] private static extern int WG_GetAuthorizationStatus();
+        [DllImport("__Internal")] private static extern void WG_StartPedometerUpdates(double startUnix);
+        [DllImport("__Internal")] private static extern double WG_ReadLiveSteps();
+        [DllImport("__Internal")] private static extern double WG_ReadLiveDistance();
+        [DllImport("__Internal")] private static extern int WG_IsSessionActive();
+        [DllImport("__Internal")] private static extern void WG_StopPedometerUpdates();
+
+        private static void RegisterCallbackOnce()
+        {
+            if (_callbackRegistered)
+            {
+                return;
+            }
+
+            _callbackRegistered = true;
+            WG_SetQueryResultCallback(OnQueryResult);
+        }
+
+        [MonoPInvokeCallback(typeof(QueryResultCallback))]
+        private static void OnQueryResult(int requestId, double steps, double distance, int errorCode)
+        {
+            TaskCompletionSource<IosQueryOutcome> source;
+            lock (PendingGate)
+            {
+                if (!PendingQueries.TryGetValue(requestId, out source))
+                {
+                    return; // stale/late answer for an already-timed-out request: drop it
+                }
+
+                PendingQueries.Remove(requestId);
+            }
+
+            source.TrySetResult(new IosQueryOutcome(steps, distance, errorCode));
+        }
+
+        /// <summary>Issues one async query; null outcome means start failure or timeout.</summary>
+        private static async Task<IosQueryOutcome?> QueryAsync(double startUnix, double endUnix)
+        {
+            int requestId;
+            var source = new TaskCompletionSource<IosQueryOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            lock (PendingGate)
+            {
+                requestId = WG_QueryPedometerAsync(startUnix, endUnix);
+                if (requestId <= 0)
+                {
+                    return null;
+                }
+
+                _lastIssuedRequestId = requestId;
+                PendingQueries[requestId] = source;
+            }
+
+            var completed = await Task.WhenAny(source.Task, Task.Delay(QueryTimeout));
+            if (completed != source.Task)
+            {
+                lock (PendingGate)
+                {
+                    PendingQueries.Remove(requestId); // late native answers are dropped as stale
+                }
+
+                return null;
+            }
+
+            return source.Task.Result;
+        }
+
+        private readonly struct IosQueryOutcome
+        {
+            public IosQueryOutcome(double steps, double distance, int errorCode)
+            {
+                Steps = steps;
+                DistanceMeters = distance;
+                ErrorCode = errorCode;
+            }
+
+            public double Steps { get; }
+            public double DistanceMeters { get; }
+            public int ErrorCode { get; }
+            public bool Failed => ErrorCode != 0 || Steps < 0;
+        }
 
         /// <summary>
         /// Contextual Motion &amp; Fitness request. iOS only surfaces its prompt when an
         /// app first touches a Core Motion API while authorization is NotDetermined, so
-        /// a benign one-minute historical query is used as the trigger and the status is
-        /// then polled until the user answers (or the generous timeout lapses). Calling
+        /// a benign asynchronous one-minute query is used as the trigger and the status
+        /// is polled until the user answers (or the generous timeout lapses). Calling
         /// this when already decided never re-prompts - matching platform semantics.
         /// </summary>
         public async Task<ActivityPermissionState> RequestMotionPermissionAsync()
@@ -49,13 +155,13 @@ namespace WalkGame.Platform.iOS
             }
 
             DateTime nowUtc = Clock.UtcNow;
-            // Result ignored; the query itself is what triggers the system dialog.
-            _ = WG_QueryPedometerSteps(ToUnix(nowUtc.AddMinutes(-1)), ToUnix(nowUtc));
+            // Result deliberately ignored: issuing the query is what triggers the dialog.
+            await QueryAsync(ToUnix(nowUtc.AddMinutes(-1)), ToUnix(nowUtc));
 
-            DateTime deadline = nowUtc + RequestPollTimeout;
+            DateTime deadline = Clock.UtcNow + RequestPollTimeout;
             while (Clock.UtcNow < deadline)
             {
-                await System.Threading.Tasks.Task.Delay(300);
+                await Task.Delay(300);
                 var current = (ActivityPermissionState)WG_GetAuthorizationStatus();
                 if (current != ActivityPermissionState.NotDetermined)
                 {
@@ -82,43 +188,38 @@ namespace WalkGame.Platform.iOS
             return Task.FromResult(capability);
         }
 
-        public Task<ActivitySnapshot> ReadSnapshotAsync(ActivityCursor cursor)
+        public async Task<ActivitySnapshot> ReadSnapshotAsync(ActivityCursor cursor)
         {
             if (WG_IsPedometerAvailable() == 0 ||
                 (ActivityPermissionState)WG_GetAuthorizationStatus() != ActivityPermissionState.Granted)
             {
-                return Task.FromResult<ActivitySnapshot>(null);
+                return null;
             }
 
             DateTime nowUtc = Clock.UtcNow;
-            DateTime since = cursor?.lastSuccessfulSyncUtc ?? nowUtc.AddHours(-24);
-
-            // Respect the seven-day historical window (MOBILE_ACTIVITY_INTEGRATION 3).
-            DateTime earliestAvailable = nowUtc - HistoryWindow;
-            if (since < earliestAvailable)
+            if (!_planner.TryPlan(cursor?.lastSuccessfulSyncUtc, nowUtc, out var since, out var until))
             {
-                since = earliestAvailable;
+                return null;
             }
 
-            if ((nowUtc - since).TotalSeconds < 60)
+            IosQueryOutcome? pending = await QueryAsync(ToUnix(since), ToUnix(until));
+            if (!pending.HasValue || pending.Value.Failed)
             {
-                return Task.FromResult<ActivitySnapshot>(null);
+                // Failed sensor queries fail closed: no snapshot, durable cursor stays
+                // where it was so the same window is retried next cycle.
+                return null;
             }
 
-            double steps = WG_QueryPedometerSteps(ToUnix(since), ToUnix(nowUtc));
-            double distance = WG_QueryPedometerDistance(ToUnix(since), ToUnix(nowUtc));
-            if (steps < 0)
-            {
-                return Task.FromResult<ActivitySnapshot>(null);
-            }
+            double steps = Math.Max(0, pending.Value.Steps);
+            double distance = pending.Value.DistanceMeters >= 0 ? pending.Value.DistanceMeters : 0;
 
             var snapshot = new ActivitySnapshot
             {
                 providerId = ProviderId,
                 intervalStartUtc = since,
-                intervalEndUtc = nowUtc,
+                intervalEndUtc = until,
                 stepCount = (long)steps,
-                estimatedDistanceMeters = distance >= 0 ? distance : (double?)null,
+                estimatedDistanceMeters = distance > 0 ? distance : (double?)null,
                 sourceType = ActivitySourceType.PhoneSensor,
                 recordingType = ActivityRecordingType.Passive,
                 quality = new ActivityQuality
@@ -128,8 +229,8 @@ namespace WalkGame.Platform.iOS
                     accuracyScore = 0.7f,
                 },
             };
-            snapshot.providerRecordIds.Add($"ios.history.{nowUtc.Ticks}");
-            return Task.FromResult(snapshot);
+            snapshot.providerRecordIds.Add($"ios.history.{until.Ticks}");
+            return snapshot;
         }
 
         public Task<SessionStartError> StartSessionAsync(SessionType sessionType)
@@ -152,7 +253,6 @@ namespace WalkGame.Platform.iOS
                 }
 
                 DateTime start = Clock.UtcNow;
-                _sessionWallClockStart = start;
                 _session = new ActiveSessionState
                 {
                     sessionType = sessionType,
@@ -174,13 +274,13 @@ namespace WalkGame.Platform.iOS
                     return Task.FromResult(new ActiveSessionSample { sessionActive = false });
                 }
 
-                double steps = Math.Max(0, WG_ReadLiveSteps() - _sessionStartLiveSteps);
+                double elapsedSeconds = Math.Max(0, (Clock.UtcNow - _session.startedAtUtc).TotalSeconds);
                 return Task.FromResult(new ActiveSessionSample
                 {
                     sessionActive = true,
-                    accumulatedSteps = (long)steps,
-                    accumulatedDistanceMeters = WG_ReadLiveDistance(),
-                    movingSeconds = (Clock.UtcNow - _sessionWallClockStart).TotalSeconds,
+                    accumulatedSteps = CurrentLiveSteps(),
+                    accumulatedDistanceMeters = Math.Max(0, WG_ReadLiveDistance()),
+                    movingSeconds = elapsedSeconds,
                 });
             }
         }
@@ -188,21 +288,24 @@ namespace WalkGame.Platform.iOS
         public Task<ActivitySessionResult> StopSessionAsync()
         {
             ActiveSessionState finished;
+            double steps;
+            double distance;
+
             lock (_gate)
             {
                 finished = _session;
+                if (finished == null)
+                {
+                    return Task.FromResult<ActivitySessionResult>(null);
+                }
+
                 _session = null;
+                steps = CurrentLiveSteps();
+                distance = Math.Max(0, WG_ReadLiveDistance());
+                WG_StopPedometerUpdates(); // live updates stop cleanly; caches reset natively
             }
 
-            if (finished == null)
-            {
-                return Task.FromResult<ActivitySessionResult>(null);
-            }
-
-            double steps = Math.Max(0, WG_ReadLiveSteps() - _sessionStartLiveSteps);
-            double distance = WG_ReadLiveDistance();
-            WG_StopPedometerUpdates();
-
+            double movingSeconds = Math.Max(0, (Clock.UtcNow - finished.startedAtUtc).TotalSeconds);
             return Task.FromResult(new ActivitySessionResult
             {
                 sessionId = finished.sessionId,
@@ -210,27 +313,21 @@ namespace WalkGame.Platform.iOS
                 startUtc = finished.startedAtUtc,
                 endUtc = Clock.UtcNow,
                 acceptedSteps = (long)steps,
-                verifiedDistanceMeters = Math.Max(0, distance),
-                verifiedMovingSeconds = (Clock.UtcNow - _sessionWallClockStart).TotalSeconds,
+                verifiedDistanceMeters = distance,
+                verifiedMovingSeconds = movingSeconds,
                 cadenceConsistency = null,
             });
+        }
+
+        private double CurrentLiveSteps()
+        {
+            return Math.Max(0, WG_ReadLiveSteps() - _sessionStartLiveSteps);
         }
 
         private static double ToUnix(DateTime utc)
         {
             return (utc - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds;
         }
-
-        // Native symbols resolve at link time on device builds (__Internal = static lib).
-        [DllImport("__Internal")] private static extern int WG_IsPedometerAvailable();
-        [DllImport("__Internal")] private static extern int WG_GetAuthorizationStatus();
-        [DllImport("__Internal")] private static extern double WG_QueryPedometerSteps(double startUnix, double endUnix);
-        [DllImport("__Internal")] private static extern double WG_QueryPedometerDistance(double startUnix, double endUnix);
-        [DllImport("__Internal")] private static extern void WG_StartPedometerUpdates(double startUnix);
-        [DllImport("__Internal")] private static extern double WG_ReadLiveSteps();
-        [DllImport("__Internal")] private static extern double WG_ReadLiveDistance();
-        [DllImport("__Internal")] private static extern int WG_IsSessionActive();
-        [DllImport("__Internal")] private static extern void WG_StopPedometerUpdates();
     }
 }
 #endif

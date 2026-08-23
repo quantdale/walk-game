@@ -6,19 +6,27 @@
  *
  * Contract:
  *  - Returns sensor FACTS only; all Vitality/reward logic lives in C#.
- *  - Historical queries are bounded by Core Motion's 7-day availability; the C#
- *    layer owns lastSuccessfulSyncUtc and never re-credits intervals.
+ *  - Historical queries are asynchronous: WG_QueryPedometerAsync returns a request
+ *    id immediately and delivers ONE combined steps+distance result through the
+ *    registered C# callback. The gameplay thread never blocks on a semaphore.
+ *  - Live session updates keep the poll model (cheap cached doubles).
  *
  * Compiled into the Xcode project from Assets/Plugins/iOS automatically.
  */
 
 static CMPedometer *wgPedometer = nil;
-static NSTimer *wgPollTimer = nil;
+static dispatch_queue_t wgQueryQueue = nil;
 
 // Live session accumulators (facts only).
 static double wgLiveSteps = 0;
 static double wgLiveDistanceMeters = 0;
 static BOOL wgSessionActive = NO;
+
+// C# callback: requestId identifies the query; steps < 0 signals failure.
+typedef void (*WGQueryResultCallback)(int requestId, double steps, double distance, int errorCode);
+static WGQueryResultCallback wgResultCallback = NULL;
+
+static int wgNextRequestId = 0;
 
 extern "C" {
 
@@ -37,60 +45,58 @@ int WG_GetAuthorizationStatus(void)
             default: return 0;                             // unavailable
         }
     }
-    return [CMPedometer isStepCountingAvailable] ? 1 : 0;
+    return [CMPedometer isStepCountingAvailable] ? 3 : 0;
 }
 
-// Returns steps for [startUnix, endUnix]; -1 on error. Bounded by system history.
-double WG_QueryPedometerSteps(double startUnix, double endUnix)
+/// C# registers its marshalled delegate once during provider construction.
+void WG_SetQueryResultCallback(WGQueryResultCallback callback)
 {
+    wgResultCallback = callback;
+}
+
+/// Asynchronous historical query over [startUnix, endUnix].
+/// Returns a positive request id, or 0 when the query could not be started
+/// (no callback registered / pedometer unavailable); -1 on invalid arguments.
+int WG_QueryPedometerAsync(double startUnix, double endUnix)
+{
+    if (wgResultCallback == NULL) {
+        return 0;
+    }
+    if (!(endUnix > startUnix)) {
+        return -1;
+    }
+    if (![CMPedometer isStepCountingAvailable]) {
+        return 0;
+    }
+
     if (!wgPedometer) {
         wgPedometer = [[CMPedometer alloc] init];
     }
-
-    NSDate *start = [NSDate dateWithTimeIntervalSince1970:startUnix];
-    NSDate *end = [NSDate dateWithTimeIntervalSince1970:endUnix];
-
-    __block double steps = -1;
-    __block BOOL done = NO;
-    dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
-
-    [wgPedometer queryPedometerDataFromDate:start toDate:end
-        withHandler:^(CMPedometerData *data, NSError *error) {
-            if (!error && data.numberOfSteps) {
-                steps = data.numberOfSteps.doubleValue;
-            }
-            done = YES;
-            dispatch_semaphore_signal(semaphore);
-        }];
-
-    // CMPedometer queries complete quickly; bounded wait keeps the interop simple.
-    dispatch_semaphore_wait(semaphore, dispatch_time(DISPATCH_TIME_NOW, 4 * NSEC_PER_SEC));
-    return steps;
-}
-
-// Returns estimated walking+running distance in meters for the interval; -1 on error.
-double WG_QueryPedometerDistance(double startUnix, double endUnix)
-{
-    if (!wgPedometer) {
-        wgPedometer = [[CMPedometer alloc] init];
+    if (!wgQueryQueue) {
+        wgQueryQueue = dispatch_queue_create("com.walkgame.pedometer.queries", DISPATCH_QUEUE_SERIAL);
     }
 
+    int requestId = ++wgNextRequestId;
     NSDate *start = [NSDate dateWithTimeIntervalSince1970:startUnix];
     NSDate *end = [NSDate dateWithTimeIntervalSince1970:endUnix];
 
-    __block double distance = -1;
-    dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
-
     [wgPedometer queryPedometerDataFromDate:start toDate:end
         withHandler:^(CMPedometerData *data, NSError *error) {
-            if (!error && data.distance) {
-                distance = data.distance.doubleValue;
-            }
-            dispatch_semaphore_signal(semaphore);
+            double steps = error ? -1 : (data.numberOfSteps ? data.numberOfSteps.doubleValue : 0);
+            double distance = (error || !data.distance) ? -1 : data.distance.doubleValue;
+            int errorCode = error ? (int)error.code : 0;
+
+            // Marshal onto our serial queue so callback registration races and
+            // overlapping queries stay ordered without touching Unity's main thread.
+            dispatch_async(wgQueryQueue, ^{
+                WGQueryResultCallback callback = wgResultCallback;
+                if (callback != NULL) {
+                    callback(requestId, steps, distance, errorCode);
+                }
+            });
         }];
 
-    dispatch_semaphore_wait(semaphore, dispatch_time(DISPATCH_TIME_NOW, 4 * NSEC_PER_SEC));
-    return distance;
+    return requestId;
 }
 
 void WG_StartPedometerUpdates(double startUnix)
@@ -135,6 +141,8 @@ void WG_StopPedometerUpdates(void)
     if (wgPedometer) {
         [wgPedometer stopPedometerUpdates];
     }
+    wgLiveSteps = 0;
+    wgLiveDistanceMeters = 0;
 }
 
 } // extern "C"

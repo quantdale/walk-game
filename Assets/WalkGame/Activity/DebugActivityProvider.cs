@@ -255,6 +255,20 @@ namespace WalkGame.Activity
             return Task.FromResult(_permission);
         }
 
+        /// <summary>
+        /// Debug action: drives implausible vehicle-like data into the CURRENT session.
+        /// Must be called between StartSessionAsync and StopSessionAsync; coroutine-safe
+        /// (no blocking) so UI flows never need .Result on the provider surface.
+        /// </summary>
+        public void SimulateVehicleDrive(double minutes, double speedKmh = 60)
+        {
+            double hours = minutes / 60.0;
+            double meters = speedKmh * 1000.0 * hours;
+            // A car produces almost no pedestrian steps relative to distance.
+            long fakeSteps = (long)(minutes * 2);
+            SimulateSessionProgress(fakeSteps, meters, minutes * 60.0);
+        }
+
         /// <summary>Drives implausible high-speed movement into the current session.</summary>
         public sealed class VehicleSessionDriver
         {
@@ -268,11 +282,7 @@ namespace WalkGame.Activity
             /// <summary>60 km/h for N minutes: distance huge, step cadence near zero.</summary>
             public void Drive(double minutes, double speedKmh = 60)
             {
-                double hours = minutes / 60.0;
-                double meters = speedKmh * 1000.0 * hours;
-                // A car produces almost no pedestrian steps relative to distance.
-                long fakeSteps = (long)(minutes * 2);
-                _owner.SimulateSessionProgress(fakeSteps, meters, minutes * 60.0);
+                _owner.SimulateVehicleDrive(minutes, speedKmh);
             }
         }
     }

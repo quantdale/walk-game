@@ -81,24 +81,7 @@ namespace WalkGame.App
                     simulateVehicleSession: () =>
                     {
                         // Vehicle-like session must earn base steps but no bonus.
-                        if (host.Provider is DebugActivityProvider debug)
-                        {
-                            var error = debug.DebugBeginVehicleLikeSession(out var driver);
-                            if (error == SessionStartError.None)
-                            {
-                                driver.Drive(minutes: 30);
-                                var result = debug.StopSessionAsync().Result;
-                                var trust = new TrustEvaluator(RewardPolicy.Default);
-                                result.trustScore = trust.EvaluateSession(new ActiveSessionState
-                                {
-                                    accumulatedSteps = result.acceptedSteps,
-                                    accumulatedDistanceMeters = result.verifiedDistanceMeters,
-                                    movingSeconds = result.verifiedMovingSeconds,
-                                }, true, false, false);
-                                host.Activity.ProcessSessionResult(result, growthEligible: false);
-                                host.Persist();
-                            }
-                        }
+                        StartCoroutine(VehicleSessionRoutine());
                     },
                     grantVitality: amount =>
                     {
@@ -142,6 +125,53 @@ namespace WalkGame.App
             {
                 _flow.EnterBuilder();
             }
+        }
+
+        /// <summary>Debug-only vehicle Expedition through the async provider surface,
+        /// observed from a coroutine so the main thread never blocks on .Result.</summary>
+        private IEnumerator VehicleSessionRoutine()
+        {
+            var host = GameHost.Current;
+            if (!(host.Provider is DebugActivityProvider debug))
+            {
+                yield break;
+            }
+
+            var startTask = debug.StartSessionAsync(SessionType.Walk);
+            while (!startTask.IsCompleted)
+            {
+                yield return null;
+            }
+
+            if (startTask.IsFaulted || startTask.Result != SessionStartError.None)
+            {
+                yield break;
+            }
+
+            debug.SimulateVehicleDrive(minutes: 30);
+
+            var stopTask = debug.StopSessionAsync();
+            while (!stopTask.IsCompleted)
+            {
+                yield return null;
+            }
+
+            if (stopTask.IsFaulted)
+            {
+                yield break;
+            }
+
+            var result = stopTask.Result;
+            var trust = new TrustEvaluator(RewardPolicy.Default);
+            result.trustScore = trust.EvaluateSession(new ActiveSessionState
+            {
+                accumulatedSteps = result.acceptedSteps,
+                accumulatedDistanceMeters = result.verifiedDistanceMeters,
+                movingSeconds = result.verifiedMovingSeconds,
+            }, true, false, false);
+            host.Activity.ProcessSessionResult(result, growthEligible: false);
+            host.Persist();
+            RefreshAll();
         }
 
         /// <summary>
