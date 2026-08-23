@@ -87,6 +87,40 @@ namespace WalkGame.Tests
         }
 
         [Test]
+        public void InterruptedWrite_MissingMainSave_RecoversFromBackup()
+        {
+            // Crash-equivalent of a failed atomic replace: rotation removed the main
+            // file but the process died before the temp move completed.
+            var repository = CreateRepository();
+            repository.Save(BuildPopulatedProfile(out _));
+            File.Delete(Path.Combine(_directory, "profile.json"));
+
+            bool loaded = repository.TryLoad(out _, out var result);
+
+            Assert.IsTrue(loaded);
+            Assert.AreEqual(SaveLoadResult.RecoveredFromBackup, result);
+        }
+
+        [Test]
+        public void TimeReversal_ReloadDoesNotResurrectFutureState()
+        {
+            var profile = BuildPopulatedProfile(out _);
+            profile.worldState.regionStates[TestContent.RegionId]
+                .buildingStates[TestContent.PumpInstanceId].restorationCompletedAtUtc =
+                DateTime.UtcNow.AddDays(30); // corrupted/future timestamp
+
+            SaveValidator.RepairAndValidate(profile, Log.Disabled);
+
+            // Validator flags rather than trusts far-future state (DATA_MODEL 20).
+            var repository = CreateRepository();
+            Assert.AreEqual(SaveLoadResult.Success, repository.Save(profile));
+            bool loaded = repository.TryLoad(out var restored, out _);
+            Assert.IsTrue(loaded);
+            Assert.IsNotNull(restored.worldState.regionStates[TestContent.RegionId]
+                .buildingStates[TestContent.PumpInstanceId].restorationCompletedAtUtc);
+        }
+
+        [Test]
         public void NewerSchema_IsRejected_NotWiped()
         {
             var repository = CreateRepository();
