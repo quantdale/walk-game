@@ -40,7 +40,15 @@ Do not silently violate these:
 
 ## Current milestone
 
-Start at Phase 0 in `docs/ROADMAP.md` unless an issue explicitly targets a later milestone.
+Do not infer the milestone from the original roadmap checkbox state. Instead:
+
+1. Consult `docs/IMPLEMENTATION_STATUS.md` - it is the authoritative, evidence-tiered
+   record of what is implemented vs verified vs unverified.
+2. Run the certification commands before starting new work:
+   `dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj`
+   (and `scripts/verify-unity-editmode.ps1` when an editor is available).
+3. Claim only evidence you actually produced; editor/device gates without the tool
+   or hardware present stay marked UNVERIFIED.
 
 ## Architecture changes
 
@@ -49,5 +57,7 @@ Major changes require an ADR under `docs/adr/NNNN-short-title.md` and correspond
 ## Definition of done
 
 A feature is not done until relevant tests, save/load behavior, lifecycle/permission fallbacks, and documentation changes are included. Native or performance-sensitive work must be validated on physical mobile hardware.
+
+Exactly-once rule for movement: one piece of real movement must never generate Vitality twice across passive polling, Expeditions, process restarts, or save reloads. Any change touching activity credit must extend the regression coverage in `ActivityServiceTests`, `AndroidCounterReconciliationTests`, and `SaveLoadTests`.
 
 See `docs/AGENT_EXECUTION_GUIDE.md` for the full workflow.

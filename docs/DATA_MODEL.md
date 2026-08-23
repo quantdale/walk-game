@@ -106,11 +106,13 @@ ActivitySyncState
 - providerCursor: string?
 - androidLastRawStepCounter: double?
 - androidLastCounterObservedUtc: timestamp?
-- creditedIntervals: bounded dedup structure
+- creditedIntervals: bounded dedup structure (serialized `entries` list + rebuild)
+- creditedSessionIds: bounded dedup structure for Expedition identity
 - activeSession: ActiveSessionState?
 ```
 
 The exact provider cursor is adapter-specific and should be wrapped so platform details do not leak into game logic.
+Dedup structures serialize their ordered `entries` field; the membership index is rebuilt on load (SaveValidator).
 
 ## 9. Activity snapshot
 

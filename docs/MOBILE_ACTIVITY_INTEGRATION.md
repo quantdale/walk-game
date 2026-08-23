@@ -297,6 +297,17 @@ Examples:
 
 Store credited keys in a bounded/compacted structure appropriate to provider capabilities.
 
+Implemented policy (campaign):
+
+- Passive credit keys are `providerId:intervalStart:intervalEnd` in a bounded FIFO store.
+- Completed Expeditions additionally record `session:<id>` in `creditedSessionIds`; any
+  re-delivery of the same session result pays nothing again.
+- While an Expedition is active it owns the movement window: providers emit no passive
+  snapshots, and the domain suppresses any that arrive anyway. On credit, the sync cursor
+  jumps past the session end so later passive windows cannot re-read those steps.
+- Dedup stores serialize through the save pipeline (`entries` field + post-load rebuild);
+  losing them would silently re-open already-paid windows after every restart.
+
 ## 13. Clock and timezone handling
 
 Use UTC for provider synchronization.
@@ -347,6 +358,21 @@ Ask only when player starts a verified Expedition that benefits from it.
 Ask only when player enables wearable/history import.
 
 Avoid requesting all permissions on first launch.
+
+### Implemented contract (campaign)
+
+- `IActivityProvider.RequestMotionPermissionAsync()` is the only prompt path; UI calls it
+  exclusively from explicit user interaction (the HUD motion-access banner).
+- Prompts fire only while the state is effectively NotDetermined; repeated calls are the
+  sanctioned retry path (e.g. after enabling access from OS Settings, followed by a plain
+  `RefreshAsync`).
+- `MotionPermissionCoordinator` (engine-free) sequences requests, never stacks prompts,
+  and treats denial as a normal outcome with consequence-focused copy
+  (see section 16), not an error state.
+- Android: Denied is distinguished from NotDetermined via the rationale hint plus a
+  process-side completed-request flag; step-counter monitoring starts only after grant.
+- iOS: while NotDetermined, one benign asynchronous Core Motion query triggers the
+  system dialog; status is polled to resolution.
 
 ## 16. Native error model
 
