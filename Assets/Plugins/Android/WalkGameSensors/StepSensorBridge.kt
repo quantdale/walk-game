@@ -33,8 +33,12 @@ class StepSensorBridge {
     private val listener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent) {
             if (event.sensor?.type == Sensor.TYPE_STEP_COUNTER) {
+                val value = event.values.firstOrNull()?.toDouble() ?: return
+                // Fail closed on corrupt payloads: never let NaN/Infinity/negative
+                // values become a baseline or delta upstream (C# re-validates too).
+                if (!value.isFinite() || value < 0.0) return
                 synchronized(this@StepSensorBridge) {
-                    latestCumulativeSteps = event.values.firstOrNull()?.toDouble() ?: 0.0
+                    latestCumulativeSteps = value
                 }
             }
         }
@@ -85,6 +89,23 @@ class StepSensorBridge {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
         val host = activity ?: return
         host.requestPermissions(arrayOf(Manifest.permission.ACTIVITY_RECOGNITION), PERMISSION_REQUEST_CODE)
+    }
+
+    /**
+     * True when the system would show a rationale for ACTIVITY_RECOGNITION, which is
+     * the earliest observable signal that the user answered the prompt with "deny".
+     * Used by the C# layer to distinguish denied from not-determined; Android 11+
+     * persistent denial (rationale stops appearing after repeated denials) is
+     * additionally tracked process-side in C#.
+     */
+    fun shouldShowRequestRationale(activity: Activity?): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
+        val host = activity ?: return false
+        return try {
+            host.shouldShowRequestPermissionRationale(Manifest.permission.ACTIVITY_RECOGNITION)
+        } catch (t: Throwable) {
+            false
+        }
     }
 
     @Synchronized

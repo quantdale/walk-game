@@ -18,6 +18,8 @@ namespace WalkGame.UI
         private Text _modeLabel;
         private Button _toggleButton;
         private RectTransform _collectBar;
+        private GameObject _permissionBanner;
+        private Text _permissionLabel;
         private UiContext _context;
 
         public void Bind(UiContext context)
@@ -55,7 +57,39 @@ namespace WalkGame.UI
             _collectBar.anchoredPosition = new Vector2(-440f, -116f);
             _collectBar.sizeDelta = new Vector2(280f, 0f);
 
+            BuildPermissionBanner(canvas.transform);
+
             Refresh();
+        }
+
+        /// <summary>
+        /// Contextual motion-access banner (MOBILE_ACTIVITY_INTEGRATION 15/16). Visible
+        /// only while access is undecided or off; copy explains the consequence instead
+        /// of platform internals and denial never blocks gameplay.
+        /// </summary>
+        private void BuildPermissionBanner(Transform canvas)
+        {
+            _permissionBanner = new GameObject("MotionPermissionBanner", typeof(Image));
+            _permissionBanner.transform.SetParent(canvas, false);
+            _permissionBanner.GetComponent<Image>().color = new Color(0.12f, 0.16f, 0.22f, 0.85f);
+            var rect = _permissionBanner.GetComponent<RectTransform>();
+            rect.anchorMin = new Vector2(0.5f, 1f);
+            rect.anchorMax = new Vector2(0.5f, 1f);
+            rect.pivot = new Vector2(0.5f, 1f);
+            rect.anchoredPosition = new Vector2(0f, -120f);
+            rect.sizeDelta = new Vector2(620f, 64f);
+
+            var textGo = new GameObject("Text", typeof(Text));
+            textGo.transform.SetParent(_permissionBanner.transform, false);
+            _permissionLabel = textGo.GetComponent<Text>();
+            _permissionLabel.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            _permissionLabel.fontSize = 20;
+            _permissionLabel.alignment = TextAnchor.MiddleCenter;
+            _permissionLabel.color = Color.white;
+            _permissionLabel.rectTransform.sizeDelta = new Vector2(430f, 56f);
+
+            CreateButton(_permissionBanner.transform, "EnableButton", new Vector2(240f, 0f), new Vector2(150f, 44f), "Enable",
+                () => _context?.EnableMotionAccessRequested?.Invoke());
         }
 
         public void Refresh()
@@ -94,7 +128,29 @@ namespace WalkGame.UI
 
             _resourceLabel.text = $"{resources}Steps {profile.lifetimeAcceptedSteps}";
 
+            RefreshPermissionBanner();
             RefreshCollectBar();
+        }
+
+        private void RefreshPermissionBanner()
+        {
+            if (_permissionBanner == null)
+            {
+                return;
+            }
+
+            var state = _context?.GetMotionPermission?.Invoke() ?? WalkGame.Activity.ActivityPermissionState.Granted;
+            bool needsAttention = state == WalkGame.Activity.ActivityPermissionState.NotDetermined
+                || state == WalkGame.Activity.ActivityPermissionState.Denied;
+            _permissionBanner.SetActive(needsAttention);
+            if (!needsAttention)
+            {
+                return;
+            }
+
+            _permissionLabel.text = state == WalkGame.Activity.ActivityPermissionState.Denied
+                ? "Motion access is off - real-world steps cannot earn Vitality until it is enabled."
+                : "Turn on motion access to turn your real-world steps into Vitality.";
         }
 
         private void RefreshCollectBar()

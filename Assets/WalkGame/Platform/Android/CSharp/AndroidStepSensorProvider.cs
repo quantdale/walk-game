@@ -9,15 +9,30 @@ namespace WalkGame.Platform.Android
 {
     /// <summary>
     /// Thin adapter over com.walkgame.sensors.StepSensorBridge (Kotlin plugin).
-    /// Native side returns sensor FACTS only; all deltas, baselines, trust and rewards
-    /// are computed here or deeper in C# (AGENT_EXECUTION_GUIDE invariant 9).
+    /// Native side returns sensor FACTS and authorization state only; all deltas,
+    /// baselines, trust and rewards are computed here or deeper in C#
+    /// (AGENT_EXECUTION_GUIDE invariant 9).
+    ///
+    /// Lifecycle contract:
+    ///  - Construction never fails because of missing permission - only an
+    ///    unresolvable bridge (packaging bug) throws, which GameHost treats as
+    ///    infrastructure failure rather than a user choice.
+    ///  - The step-counter listener is registered lazily once ACTIVITY_RECOGNITION
+    ///    is granted; registering earlier would only observe zeroed values on
+    ///    Android 10+ and waste the first valid baseline.
+    ///  - Permission prompts fire exclusively through RequestMotionPermissionAsync,
+    ///    which the UI invokes after explicit user intent (PRIVACY_SAFETY_ANTI_CHEAT 4).
     /// </summary>
     public sealed class AndroidStepSensorProvider : IActivityProvider
     {
         public const string ProviderIdValue = "activity.android.stepcounter";
 
+        private static readonly TimeSpan RequestPollTimeout = TimeSpan.FromSeconds(120);
+        private const int RequestPollIntervalMs = 300;
+
         private readonly object _gate = new object();
         private readonly AndroidJavaObject _bridge;
+        private readonly AndroidJavaObject _activity;
         private readonly Log _log;
 
         private readonly IClock _clock;
@@ -25,12 +40,24 @@ namespace WalkGame.Platform.Android
         private long _pendingDelta;
         private ActiveSessionState _session;
 
+        // Runtime refinement over the native tri-state: once a request round has
+        // completed without grant, later non-granted reports mean "denied", not
+        // "never asked" (Android 11+ stops showing the dialog entirely after
+        // repeated denials, so the raw status alone cannot express this).
+        private bool _completedRequestWithoutGrant;
+        private bool _monitoringStarted;
+
         public AndroidStepSensorProvider(IClock clock, Log log = null)
-        : this(clock, null, log)
+        : this(clock, null, null, log)
         {
         }
 
         public AndroidStepSensorProvider(IClock clock, AndroidJavaObject existingBridge, Log log = null)
+        : this(clock, existingBridge, null, log)
+        {
+        }
+
+        public AndroidStepSensorProvider(IClock clock, AndroidJavaObject existingBridge, AndroidJavaObject existingActivity, Log log = null)
         {
             _log = log ?? Core.Log.Disabled;
             _clock = clock ?? Core.SystemClock.Instance;
@@ -41,24 +68,51 @@ namespace WalkGame.Platform.Android
                 throw new InvalidOperationException("StepSensorBridge not resolvable.");
             }
 
-            if (existingBridge == null)
+            if (existingBridge == null || existingActivity == null)
             {
-                // Hand the plugin the Unity player activity for permission prompts.
                 using var player = new AndroidJavaClass("com.unity3d.player.UnityPlayer");
-                using var activity = player.GetStatic<AndroidJavaObject>("currentActivity");
-                _bridge.Call("initialize", activity);
+                _activity = existingActivity ?? player.GetStatic<AndroidJavaObject>("currentActivity");
+                _bridge.Call("initialize", _activity);
+            }
+            else
+            {
+                _activity = existingActivity;
             }
 
-            // Start receiving cumulative counter values while the app is in the foreground.
-            // Reconciliation happens on app resume rather than a permanent background
-            // service (MOBILE_ACTIVITY_INTEGRATION section 7).
-            if (IsCounterAvailable())
+            // If motion access is already granted (returning user), start listening
+            // immediately; otherwise monitoring begins after a successful request.
+            if (ReadRefinedPermission() == ActivityPermissionState.Granted)
             {
-                _bridge.Call<bool>("startMonitoring");
+                EnsureMonitoringStarted();
             }
         }
 
         public string ProviderId => ProviderIdValue;
+
+        /// <summary>Idempotent listener startup; safe to call repeatedly.</summary>
+        public void EnsureMonitoringStarted()
+        {
+            lock (_gate)
+            {
+                if (_monitoringStarted || !IsCounterAvailable())
+                {
+                    return;
+                }
+
+                try
+                {
+                    _monitoringStarted = _bridge.Call<bool>("startMonitoring");
+                    if (_monitoringStarted)
+                    {
+                        _log.Info("Step counter monitoring started.");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _log.Warning($"startMonitoring failed: {ex.Message}");
+                }
+            }
+        }
 
         public Task<ActivityCapability> GetCapabilityAsync()
         {
@@ -71,10 +125,61 @@ namespace WalkGame.Platform.Android
                 supportsDistance = false,
                 supportsCadence = false,
                 supportsLocationSession = false,
-                motionPermission = (ActivityPermissionState)_bridge.Call<int>("getAuthorizationStatus"),
+                motionPermission = ReadRefinedPermission(),
                 locationPermission = ActivityPermissionState.Unavailable,
             };
             return Task.FromResult(capability);
+        }
+
+        /// <summary>
+        /// Contextual ACTIVITY_RECOGNITION request. Only fires the OS dialog when the
+        /// state is effectively NotDetermined; resolves by short-interval polling of
+        /// the runtime grant state plus the rationale hint (denials surface quickly),
+        /// bounded by a generous timeout for players who leave the dialog open.
+        /// </summary>
+        public async Task<ActivityPermissionState> RequestMotionPermissionAsync()
+        {
+            var before = ReadRefinedPermission();
+            if (before == ActivityPermissionState.Granted || before == ActivityPermissionState.Unavailable)
+            {
+                return before;
+            }
+
+            try
+            {
+                _bridge.Call("requestPermission", _activity);
+            }
+            catch (Exception ex)
+            {
+                _log.Warning($"requestPermission failed: {ex.Message}");
+                return ReadRefinedPermission();
+            }
+
+            DateTime deadline = DateTime.UtcNow + RequestPollTimeout;
+            while (DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(RequestPollIntervalMs);
+
+                var current = ReadRefinedPermission();
+                if (current == ActivityPermissionState.Granted)
+                {
+                    EnsureMonitoringStarted();
+                    return current;
+                }
+
+                bool rationaleVisible = ReadRationaleHint();
+                bool answered = current == ActivityPermissionState.Denied || rationaleVisible;
+                if (answered)
+                {
+                    _completedRequestWithoutGrant = true;
+                    return current == ActivityPermissionState.Denied
+                        ? current
+                        : ActivityPermissionState.Denied;
+                }
+            }
+
+            // Dialog left open past the timeout: report the honest undecided state.
+            return ReadRefinedPermission();
         }
 
         /// <summary>Drains steps accumulated since the previous successful read.</summary>
@@ -82,11 +187,12 @@ namespace WalkGame.Platform.Android
         {
             lock (_gate)
             {
-                if (!IsCounterAvailable())
+                if (!IsCounterAvailable() || ReadRefinedPermission() != ActivityPermissionState.Granted)
                 {
                     return Task.FromResult<ActivitySnapshot>(null);
                 }
 
+                EnsureMonitoringStarted();
                 ConsumeRawCounter();
 
                 if (_pendingDelta <= 0)
@@ -123,7 +229,7 @@ namespace WalkGame.Platform.Android
                     return Task.FromResult(SessionStartError.SensorUnavailable);
                 }
 
-                if ((ActivityPermissionState)_bridge.Call<int>("getAuthorizationStatus") != ActivityPermissionState.Granted)
+                if (ReadRefinedPermission() != ActivityPermissionState.Granted)
                 {
                     return Task.FromResult(SessionStartError.PermissionDenied);
                 }
@@ -133,12 +239,14 @@ namespace WalkGame.Platform.Android
                     return Task.FromResult(SessionStartError.AlreadyRunning);
                 }
 
+                EnsureMonitoringStarted();
                 ConsumeRawCounter();
+                long baseline = HasValidBaseline ? (long)_lastRawCounter : 0L;
                 _session = new ActiveSessionState
                 {
                     sessionType = sessionType,
                     startedAtUtc = _clock.UtcNow,
-                    initialStepBaseline = (long)_lastRawCounter,
+                    initialStepBaseline = baseline,
                 };
                 return Task.FromResult(SessionStartError.None);
             }
@@ -154,16 +262,13 @@ namespace WalkGame.Platform.Android
                 }
 
                 ConsumeRawCounter();
-                long sessionSteps = _lastRawCounter > double.MinValue
-                    ? (long)System.Math.Max(0, _lastRawCounter - _session.initialStepBaseline.GetValueOrDefault())
-                    : 0;
-
+                double elapsedSeconds = (_clock.UtcNow - _session.startedAtUtc).TotalSeconds;
                 return Task.FromResult(new ActiveSessionSample
                 {
                     sessionActive = true,
-                    accumulatedSteps = sessionSteps,
+                    accumulatedSteps = CurrentSessionSteps(_session),
                     accumulatedDistanceMeters = _session.accumulatedDistanceMeters,
-                    movingSeconds = (_clock.UtcNow - _session.startedAtUtc).TotalSeconds,
+                    movingSeconds = System.Math.Max(0, elapsedSeconds),
                 });
             }
         }
@@ -183,21 +288,29 @@ namespace WalkGame.Platform.Android
                 return Task.FromResult<ActivitySessionResult>(null);
             }
 
-            long steps = finished.HasBaseline && _lastRawCounter > double.MinValue
-                ? (long)System.Math.Max(0, _lastRawCounter - finished.initialStepBaseline.GetValueOrDefault())
-                : finished.accumulatedSteps;
-
             return Task.FromResult(new ActivitySessionResult
             {
                 sessionId = finished.sessionId,
                 type = finished.sessionType,
                 startUtc = finished.startedAtUtc,
                 endUtc = _clock.UtcNow,
-                acceptedSteps = steps,
+                acceptedSteps = CurrentSessionSteps(finished),
                 verifiedDistanceMeters = 0, // distance requires the optional location flow (Phase 4C)
-                verifiedMovingSeconds = (DateTime.UtcNow - finished.startedAtUtc).TotalSeconds,
+                verifiedMovingSeconds = System.Math.Max(0, (_clock.UtcNow - finished.startedAtUtc).TotalSeconds),
                 cadenceConsistency = null,
             });
+        }
+
+        private bool HasValidBaseline => _lastRawCounter > double.MinValue && !double.IsInfinity(_lastRawCounter);
+
+        private long CurrentSessionSteps(ActiveSessionState session)
+        {
+            if (session == null || !session.HasBaseline || !HasValidBaseline)
+            {
+                return 0;
+            }
+
+            return (long)System.Math.Max(0, _lastRawCounter - session.initialStepBaseline.GetValueOrDefault());
         }
 
         private bool IsCounterAvailable()
@@ -213,6 +326,43 @@ namespace WalkGame.Platform.Android
             }
         }
 
+        private ActivityPermissionState ReadRefinedPermission()
+        {
+            int raw;
+            try
+            {
+                raw = _bridge.Call<int>("getAuthorizationStatus");
+            }
+            catch (Exception ex)
+            {
+                _log.Warning($"getAuthorizationStatus failed: {ex.Message}");
+                return ActivityPermissionState.Unavailable;
+            }
+
+            switch (raw)
+            {
+                case 3: return ActivityPermissionState.Granted;
+                case 2: return ActivityPermissionState.Denied;
+                case 1:
+                    return _completedRequestWithoutGrant || ReadRationaleHint()
+                        ? ActivityPermissionState.Denied
+                        : ActivityPermissionState.NotDetermined;
+                default: return ActivityPermissionState.Unavailable;
+            }
+        }
+
+        private bool ReadRationaleHint()
+        {
+            try
+            {
+                return _activity != null && _bridge.Call<bool>("shouldShowRequestRationale", _activity);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         /// <summary>
         /// Reads the raw cumulative counter and folds it into the pending delta.
         /// A decreasing raw counter means reboot/provider reset: re-baseline, never
@@ -220,11 +370,34 @@ namespace WalkGame.Platform.Android
         /// </summary>
         private void ConsumeRawCounter()
         {
-            double raw = _bridge.Call<double>("getCumulativeSteps");
-
-            if (_lastRawCounter <= double.MinValue)
+            double raw;
+            try
             {
-                // First observation after install/process start: establish baseline.
+                raw = _bridge.Call<double>("getCumulativeSteps");
+            }
+            catch (Exception ex)
+            {
+                _log.Warning($"getCumulativeSteps failed: {ex.Message}");
+                return;
+            }
+
+            if (double.IsNaN(raw) || double.IsInfinity(raw))
+            {
+                // No observation yet (bridge initializes to NaN) or a corrupt event:
+                // fail closed, keep the previous baseline untouched.
+                return;
+            }
+
+            if (raw < 0)
+            {
+                _log.Warning($"Negative cumulative step value {raw}; ignored.");
+                return;
+            }
+
+            if (!HasValidBaseline)
+            {
+                // First valid observation after install/process start: establish
+                // baseline without crediting anything.
                 _lastRawCounter = raw;
                 return;
             }

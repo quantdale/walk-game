@@ -1,6 +1,8 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using WalkGame.Activity;
 using WalkGame.Core;
 using WalkGame.Gameplay;
 using WalkGame.UI;
@@ -20,6 +22,8 @@ namespace WalkGame.App
         private DebugMenuController _debugMenu;
         private ActivityTicker _ticker;
         private AppFlowController _flow;
+        private MotionPermissionCoordinator _motionPermissions;
+        private bool _permissionRequestInFlight;
 
         public void Compose(AppFlowController flow, ActivityTicker ticker)
         {
@@ -31,6 +35,11 @@ namespace WalkGame.App
             var hudGo = new GameObject("Hud");
             hudGo.transform.SetParent(transform, false);
             _hud = hudGo.AddComponent<HudController>();
+
+            _motionPermissions = new MotionPermissionCoordinator(host.Provider, host.Log);
+            _motionPermissions.StateChanged += _ => RefreshAll();
+            _ = _motionPermissions.RefreshAsync(); // reconcile with platform on boot
+
             _hud.Bind(new UiContext
             {
                 GetProfile = () => host.Profile,
@@ -38,6 +47,8 @@ namespace WalkGame.App
                 ToggleExploreRequested = ToggleMode,
                 GetCollectables = GetCollectables,
                 CollectProducerRequested = CollectProducer,
+                GetMotionPermission = () => _motionPermissions.CurrentState,
+                EnableMotionAccessRequested = BeginMotionPermissionRequest,
             });
 
             var projectsGo = new GameObject("ProjectPanel");
@@ -157,6 +168,42 @@ namespace WalkGame.App
 
             host.Persist();
             _flow.Presenter?.Refresh();
+            RefreshAll();
+        }
+
+        /// <summary>
+        /// Runs the contextual permission round-trip from the HUD button without ever
+        /// blocking the main thread; overlapping taps are ignored while in flight.
+        /// </summary>
+        private void BeginMotionPermissionRequest()
+        {
+            if (_permissionRequestInFlight || _motionPermissions == null)
+            {
+                return;
+            }
+
+            _permissionRequestInFlight = true;
+            StartCoroutine(MotionPermissionRoutine());
+        }
+
+        private IEnumerator MotionPermissionRoutine()
+        {
+            var request = _motionPermissions.RequestAsync();
+            while (!request.IsCompleted)
+            {
+                yield return null;
+            }
+
+            _permissionRequestInFlight = false;
+            if (request.IsFaulted)
+            {
+                GameHost.Current.Log.Warning("Motion permission request faulted; state left unchanged.");
+            }
+            else
+            {
+                GameHost.Current.Log.Info($"Motion permission outcome: {request.Result}.");
+            }
+
             RefreshAll();
         }
 

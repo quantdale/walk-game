@@ -31,6 +31,41 @@ namespace WalkGame.Platform.iOS
 
         public string ProviderId => ProviderIdValue;
 
+        private static readonly TimeSpan RequestPollTimeout = TimeSpan.FromSeconds(120);
+
+        /// <summary>
+        /// Contextual Motion &amp; Fitness request. iOS only surfaces its prompt when an
+        /// app first touches a Core Motion API while authorization is NotDetermined, so
+        /// a benign one-minute historical query is used as the trigger and the status is
+        /// then polled until the user answers (or the generous timeout lapses). Calling
+        /// this when already decided never re-prompts - matching platform semantics.
+        /// </summary>
+        public async Task<ActivityPermissionState> RequestMotionPermissionAsync()
+        {
+            var before = (ActivityPermissionState)WG_GetAuthorizationStatus();
+            if (before != ActivityPermissionState.NotDetermined)
+            {
+                return before;
+            }
+
+            DateTime nowUtc = Clock.UtcNow;
+            // Result ignored; the query itself is what triggers the system dialog.
+            _ = WG_QueryPedometerSteps(ToUnix(nowUtc.AddMinutes(-1)), ToUnix(nowUtc));
+
+            DateTime deadline = nowUtc + RequestPollTimeout;
+            while (Clock.UtcNow < deadline)
+            {
+                await System.Threading.Tasks.Task.Delay(300);
+                var current = (ActivityPermissionState)WG_GetAuthorizationStatus();
+                if (current != ActivityPermissionState.NotDetermined)
+                {
+                    return current;
+                }
+            }
+
+            return ActivityPermissionState.NotDetermined;
+        }
+
         public Task<ActivityCapability> GetCapabilityAsync()
         {
             var capability = new ActivityCapability

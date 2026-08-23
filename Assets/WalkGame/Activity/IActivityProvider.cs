@@ -43,20 +43,30 @@ namespace WalkGame.Activity
         ProviderError
     }
 
-    /// <summary>
-    /// The only surface through which game code observes real-world movement.
-    /// Reward/restoration code must never call CMPedometer, SensorManager, HealthKit,
-    /// Health Connect or location APIs directly (AGENT_EXECUTION_GUIDE 11).
-    /// </summary>
-    public interface IActivityProvider
-    {
-        string ProviderId { get; }
-        Task<ActivityCapability> GetCapabilityAsync();
-        Task<ActivitySnapshot> ReadSnapshotAsync(ActivityCursor cursor);
-        Task<SessionStartError> StartSessionAsync(SessionType sessionType);
-        Task<ActiveSessionSample> PollSessionAsync();
-        Task<ActivitySessionResult> StopSessionAsync();
-    }
+        /// <summary>
+        /// The only surface through which game code observes real-world movement.
+        /// Reward/restoration code must never call CMPedometer, SensorManager, HealthKit,
+        /// Health Connect or location APIs directly (AGENT_EXECUTION_GUIDE 11).
+        /// </summary>
+        public interface IActivityProvider
+        {
+            string ProviderId { get; }
+            Task<ActivityCapability> GetCapabilityAsync();
+
+            /// <summary>
+            /// Contextual motion-permission request (MOBILE_ACTIVITY_INTEGRATION 15).
+            /// Must only trigger the OS prompt when the platform reports NotDetermined;
+            /// repeated calls act as a retry path and never throw. Returns the observed
+            /// post-request state; implementations may return the unchanged current
+            /// state when the dialog is still open or the platform cannot answer yet.
+            /// </summary>
+            Task<ActivityPermissionState> RequestMotionPermissionAsync();
+
+            Task<ActivitySnapshot> ReadSnapshotAsync(ActivityCursor cursor);
+            Task<SessionStartError> StartSessionAsync(SessionType sessionType);
+            Task<ActiveSessionSample> PollSessionAsync();
+            Task<ActivitySessionResult> StopSessionAsync();
+        }
 
     /// <summary>Transient live reading for an in-progress Expedition.</summary>
     public sealed class ActiveSessionSample

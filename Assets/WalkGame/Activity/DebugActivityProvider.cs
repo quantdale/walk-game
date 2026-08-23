@@ -18,7 +18,8 @@ namespace WalkGame.Activity
         private readonly object _gate = new object();
 
         private double _rawCumulativeStepCounter = 5000; // pretend device booted a while ago
-        private bool _permissionGranted = true;
+        private ActivityPermissionState _permission = ActivityPermissionState.Granted;
+        private bool _autoGrantOnRequest = true;
 
         private ActiveSessionState _session;
 
@@ -45,7 +46,7 @@ namespace WalkGame.Activity
                 supportsLocationSession = true,
                 motionPermission = SimulateSensorUnavailable
                     ? ActivityPermissionState.Unavailable
-                    : _permissionGranted ? ActivityPermissionState.Granted : ActivityPermissionState.Denied,
+                    : _permission,
                 locationPermission = ActivityPermissionState.NotDetermined,
             });
         }
@@ -53,7 +54,7 @@ namespace WalkGame.Activity
         /// <summary>Passive delta since cursor: everything accumulated on the fake counter.</summary>
         public Task<ActivitySnapshot> ReadSnapshotAsync(ActivityCursor cursor)
         {
-            if (SimulateSensorUnavailable || !_permissionGranted)
+            if (SimulateSensorUnavailable || _permission != ActivityPermissionState.Granted)
             {
                 return Task.FromResult<ActivitySnapshot>(null);
             }
@@ -102,7 +103,7 @@ namespace WalkGame.Activity
                 return Task.FromResult(SessionStartError.SensorUnavailable);
             }
 
-            if (!_permissionGranted)
+            if (_permission != ActivityPermissionState.Granted)
             {
                 return Task.FromResult(SessionStartError.PermissionDenied);
             }
@@ -224,7 +225,34 @@ namespace WalkGame.Activity
 
         public void DebugSetPermission(bool granted)
         {
-            _permissionGranted = granted;
+            SetSimulatedPermission(granted ? ActivityPermissionState.Granted : ActivityPermissionState.Denied);
+        }
+
+        /// <summary>Debug/test control: full permission state including NotDetermined.</summary>
+        public void SetSimulatedPermission(ActivityPermissionState state)
+        {
+            _permission = state;
+        }
+
+        /// <summary>Debug/test control: when false, requests stay NotDetermined so callers
+        /// can exercise the still-undecided path deterministically.</summary>
+        public void SetAutoGrantOnRequest(bool autoGrant)
+        {
+            _autoGrantOnRequest = autoGrant;
+        }
+
+        /// <summary>
+        /// Mirrors platform semantics: only NotDetermined triggers a "prompt"; denial is
+        /// sticky until something external changes it (Settings toggle / test code).
+        /// </summary>
+        public Task<ActivityPermissionState> RequestMotionPermissionAsync()
+        {
+            if (_permission == ActivityPermissionState.NotDetermined && _autoGrantOnRequest)
+            {
+                _permission = ActivityPermissionState.Granted;
+            }
+
+            return Task.FromResult(_permission);
         }
 
         /// <summary>Drives implausible high-speed movement into the current session.</summary>
