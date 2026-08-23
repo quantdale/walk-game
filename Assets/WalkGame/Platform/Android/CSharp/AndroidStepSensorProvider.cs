@@ -1,3 +1,4 @@
+#if UNITY_ANDROID && !UNITY_EDITOR
 using System;
 using System.Threading.Tasks;
 using UnityEngine;
@@ -242,3 +243,4 @@ namespace WalkGame.Platform.Android
         }
     }
 }
+#endif

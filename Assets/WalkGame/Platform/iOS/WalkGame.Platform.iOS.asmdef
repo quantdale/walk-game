@@ -5,9 +5,7 @@
         "WalkGame.Core",
         "WalkGame.Activity"
     ],
-    "includePlatforms": [
-        "iOS"
-    ],
+    "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
     "overrideReferences": false,
@@ -15,5 +13,5 @@
     "autoReferenced": true,
     "defineConstraints": [],
     "versionDefines": [],
-    "noEngineReferences": true
+    "noEngineReferences": false
 }

@@ -1,3 +1,4 @@
+#if UNITY_IOS && !UNITY_EDITOR
 using System;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
@@ -197,3 +198,4 @@ namespace WalkGame.Platform.iOS
         [DllImport("__Internal")] private static extern void WG_StopPedometerUpdates();
     }
 }
+#endif
