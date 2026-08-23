@@ -38,11 +38,21 @@ namespace WalkGame.Activity
         /// <summary>
         /// Processes one passive provider snapshot. Passive movement earns base Vitality
         /// only - never speed/route bonuses (ACTIVITY_REWARD_SYSTEM 4). Returns accepted steps.
+        /// Exactly-once policy (campaign S8): while an Expedition is active the passive
+        /// stream is suppressed entirely - both pathways would otherwise claim the same
+        /// physical steps; the active session owns its window and passive windows resume
+        /// after its end. Suppressed reads do not touch dedup keys or cursors.
         /// </summary>
         public long ProcessPassiveSnapshot(ActivitySnapshot snapshot)
         {
             if (snapshot == null)
             {
+                return 0;
+            }
+
+            if (_profile.activityState.activeSession != null)
+            {
+                _log.Debug("Passive snapshot suppressed: Expedition in progress owns the movement window.");
                 return 0;
             }
 
@@ -74,12 +84,25 @@ namespace WalkGame.Activity
         /// <summary>
         /// Processes a completed Expedition. Base steps always count; optional bonuses are
         /// gated by trust and capped. Low trust is communicated neutrally by UI, not punished.
+        /// Exactly-once policy (campaign S8): a durable per-session identity prevents any
+        /// re-delivery of the same result from paying twice, and on first credit the sync
+        /// cursor jumps to the session end so later passive windows cannot re-read the
+        /// same physical steps through historical queries (iOS path).
         /// </summary>
         public ActivitySessionResult ProcessSessionResult(ActivitySessionResult result, bool growthEligible)
         {
             if (result == null)
             {
                 return null;
+            }
+
+            string sessionKey = $"session:{result.sessionId}";
+            if (!_profile.activityState.creditedSessionIds.TryMarkCredited(sessionKey))
+            {
+                _log.Info($"Duplicate expedition result ignored: {sessionKey}");
+                result.acceptedSteps = 0;
+                result.bonusBreakdown = new ActivityBonusBreakdown();
+                return result;
             }
 
             long acceptedSteps = Math.Max(0, result.acceptedSteps);
@@ -110,8 +133,14 @@ namespace WalkGame.Activity
                 CreditBreakdown(result.sessionId, breakdown);
             }
 
-            // Session completed; clear active session state only after crediting succeeded.
+            // Session completed; clear active session state only after crediting succeeded,
+            // then partition the passive timeline past this window.
             _profile.activityState.activeSession = null;
+            if (result.endUtc > (_profile.activityState.lastSuccessfulSyncUtc ?? DateTime.MinValue))
+            {
+                _profile.activityState.lastSuccessfulSyncUtc = result.endUtc;
+            }
+
             CheckStepMilestones();
             return result;
         }

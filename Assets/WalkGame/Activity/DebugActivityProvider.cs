@@ -59,6 +59,15 @@ namespace WalkGame.Activity
                 return Task.FromResult<ActivitySnapshot>(null);
             }
 
+            // While an Expedition runs, the session owns the counter stream (S8).
+            lock (_gate)
+            {
+                if (_session != null)
+                {
+                    return Task.FromResult<ActivitySnapshot>(null);
+                }
+            }
+
             long steps;
             lock (_gate)
             {

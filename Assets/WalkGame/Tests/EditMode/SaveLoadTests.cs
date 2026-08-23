@@ -135,6 +135,52 @@ namespace WalkGame.Tests
             }
         }
 
+        [Test]
+        public void SaveReload_PreservesExactlyOnceDedupState_AfterActivityCredit()
+        {
+            // Campaign S16: activity credit -> save -> restart must keep dedup keys so a
+            // replayed snapshot/session cannot pay twice across process boundaries.
+            var profile = new PlayerProfile();
+            profile.activityState.lastSuccessfulSyncUtc = _clock.UtcNow.AddMinutes(-30);
+            Assert.IsTrue(profile.activityState.creditedIntervals.TryMarkCredited(
+                "activity.ios.coremotion:2026-06-01T09:30:00.0000000Z:2026-06-01T10:00:00.0000000Z"));
+            Assert.IsTrue(profile.activityState.creditedSessionIds.TryMarkCredited("session:abc-123"));
+            profile.activityState.androidLastRawStepCounter = 12345.0;
+            profile.lifetimeAcceptedSteps = 6000;
+            profile.lifetimeVerifiedDistanceMeters = 4200;
+
+            var repository = CreateRepository();
+            Assert.AreEqual(SaveLoadResult.Success, repository.Save(profile));
+
+            bool loaded = repository.TryLoad(out var restored, out var result);
+            Assert.IsTrue(loaded);
+            Assert.AreEqual(SaveLoadResult.Success, result);
+
+            string replayedIntervalKey = "activity.ios.coremotion:2026-06-01T09:30:00.0000000Z:2026-06-01T10:00:00.0000000Z";
+            Assert.IsTrue(restored.activityState.creditedIntervals.Contains(replayedIntervalKey),
+                "credited intervals must survive restart");
+            Assert.IsFalse(restored.activityState.creditedIntervals.TryMarkCredited(replayedIntervalKey));
+            Assert.IsTrue(restored.activityState.creditedSessionIds.Contains("session:abc-123"));
+            Assert.IsFalse(restored.activityState.creditedSessionIds.TryMarkCredited("session:abc-123"));
+            Assert.AreEqual(12345.0, restored.activityState.androidLastRawStepCounter.GetValueOrDefault());
+        }
+
+        [Test]
+        public void Validator_RepairsNullDedupStores_FromOldSaves()
+        {
+            var payload = _serializer.Serialize(new PlayerProfile());
+            payload = payload.Replace("\"creditedSessionIds\"", "\"ignoredField\"");
+            var parsed = _serializer.Deserialize(payload);
+            // Simulate a hand-edited save with explicit nulls:
+            parsed.activityState.creditedIntervals = null;
+            parsed.activityState.creditedSessionIds = null;
+
+            SaveValidator.RepairAndValidate(parsed, Log.Disabled);
+
+            Assert.IsNotNull(parsed.activityState.creditedIntervals);
+            Assert.IsNotNull(parsed.activityState.creditedSessionIds);
+        }
+
         private PlayerProfile BuildPopulatedProfile(out BuildingPlacement expectedPlacement)
         {
             var catalog = TestContent.Create();

@@ -122,6 +122,17 @@ namespace WalkGame.Activity
             return pending;
         }
 
+        /// <summary>Returns previously-undrained steps to the passive stream (campaign S8:
+        /// while an Expedition runs it owns the counter deltas that had accumulated in
+        /// the passive pipeline; the pre-session residue is restored on completion).</summary>
+        public void RestorePending(long steps)
+        {
+            if (steps > 0)
+            {
+                PendingDelta += steps;
+            }
+        }
+
         private static bool IsUsable(double value)
         {
             return !double.IsNaN(value) && !double.IsInfinity(value) && value >= 0;

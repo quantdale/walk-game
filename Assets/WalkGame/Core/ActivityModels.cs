@@ -123,14 +123,23 @@ namespace WalkGame.Core
     /// <summary>
     /// Bounded dedup structure for credited activity keys (DATA_MODEL.md 8).
     /// Keeps the most recent entries; drops the oldest once capacity is exceeded.
+    ///
+    /// Persistence shape: <see cref="entries"/> is a plain public field so Newtonsoft
+    /// round-trips it directly. The earlier property-based design was silently dropped
+    /// by the serializer (collection getters are populated by reuse, setters skipped),
+    /// which lost exactly-once state across every restart - campaign S8 regression.
+    /// Call <see cref="Rebuild"/> after external assignment (load path) to restore the
+    /// membership index.
     /// </summary>
     public sealed class CreditedActivityKeys
     {
         private const int DefaultCapacity = 512;
 
         private readonly int _capacity;
-        private readonly Queue<string> _order = new Queue<string>();
         private readonly HashSet<string> _set = new HashSet<string>();
+
+        /// <summary>Oldest-to-newest ordered key log; the canonical serialized form.</summary>
+        public List<string> entries = new List<string>();
 
         public CreditedActivityKeys() : this(DefaultCapacity)
         {
@@ -148,6 +157,33 @@ namespace WalkGame.Core
 
         public int Count => _set.Count;
 
+        /// <summary>Restores the membership index after <see cref="entries"/> was
+        /// assigned externally (deserialization); applies the bounded-window policy.</summary>
+        public void Rebuild()
+        {
+            _set.Clear();
+            for (int i = entries.Count - 1; i >= 0; i--)
+            {
+                var key = entries[i];
+                if (string.IsNullOrEmpty(key))
+                {
+                    entries.RemoveAt(i);
+                }
+            }
+
+            for (int i = entries.Count - 1; i >= 0; i--)
+            {
+                _set.Add(entries[i]);
+            }
+
+            while (entries.Count > _capacity)
+            {
+                var oldest = entries[0];
+                entries.RemoveAt(0);
+                _set.Remove(oldest);
+            }
+        }
+
         public bool Contains(string key)
         {
             return key != null && _set.Contains(key);
@@ -161,10 +197,11 @@ namespace WalkGame.Core
                 return false;
             }
 
-            _order.Enqueue(key);
-            while (_order.Count > _capacity)
+            entries.Add(key);
+            while (entries.Count > _capacity)
             {
-                var oldest = _order.Dequeue();
+                var oldest = entries[0];
+                entries.RemoveAt(0);
                 _set.Remove(oldest);
             }
 
@@ -186,6 +223,11 @@ namespace WalkGame.Core
         public DateTime? androidLastCounterObservedUtc;
 
         public CreditedActivityKeys creditedIntervals = new CreditedActivityKeys();
+
+        /// <summary>Durable identity of already-credited Expeditions (campaign S8): a
+        /// re-delivered session result must never pay base steps or bonuses twice.</summary>
+        public CreditedActivityKeys creditedSessionIds = new CreditedActivityKeys();
+
         public ActiveSessionState activeSession;
     }
 }

@@ -55,6 +55,14 @@ namespace WalkGame.Persistence
             {
                 RepairRegion(regionPair.Value, log);
             }
+
+            // Dedup stores are additive schema fields (campaign S8): repair explicit
+            // nulls from older/hand-edited saves and rebuild the membership indexes the
+            // deserializer cannot populate (entries is a canonical serialized field).
+            var activity = profile.activityState ?? new ActivitySyncState();
+            profile.activityState = activity;
+            (activity.creditedIntervals ??= new CreditedActivityKeys()).Rebuild();
+            (activity.creditedSessionIds ??= new CreditedActivityKeys()).Rebuild();
         }
 
         private static void RepairRegion(RegionState region, Log log)

@@ -49,6 +49,7 @@ namespace WalkGame.Platform.Android
         // repeated denials, so the raw status alone cannot express this).
         private bool _completedRequestWithoutGrant;
         private bool _monitoringStarted;
+        private long _pendingAtSessionStart;
 
         public AndroidStepSensorProvider(IClock clock, Log log = null)
         : this(clock, null, null, null, log)
@@ -203,12 +204,19 @@ namespace WalkGame.Platform.Android
             return ReadRefinedPermission();
         }
 
-        /// <summary>Drains steps accumulated since the previous successful read.</summary>
+        /// <summary>Drains steps accumulated since the previous successful read. While an
+        /// Expedition session is active it owns the whole counter stream, so passive
+        /// reads are suppressed and cannot double-credit its steps (campaign S8).</summary>
         public Task<ActivitySnapshot> ReadSnapshotAsync(ActivityCursor cursor)
         {
             lock (_gate)
             {
                 if (!IsCounterAvailable() || ReadRefinedPermission() != ActivityPermissionState.Granted)
+                {
+                    return Task.FromResult<ActivitySnapshot>(null);
+                }
+
+                if (_session != null)
                 {
                     return Task.FromResult<ActivitySnapshot>(null);
                 }
@@ -268,6 +276,9 @@ namespace WalkGame.Platform.Android
                     startedAtUtc = _clock.UtcNow,
                     initialStepBaseline = _reconciler.HasBaseline ? (long)_reconciler.LastRawCounter.GetValueOrDefault() : 0L,
                 };
+                // Everything already folded but not yet drained belongs to the passive
+                // timeline BEFORE this session; remembered so completion can restore it.
+                _pendingAtSessionStart = _reconciler.PendingDelta;
                 return Task.FromResult(SessionStartError.None);
             }
         }
@@ -308,6 +319,15 @@ namespace WalkGame.Platform.Android
                 return Task.FromResult<ActivitySessionResult>(null);
             }
 
+            long sessionSteps = CurrentSessionSteps(finished);
+
+            // Partition the folded stream: deltas folded during the session belong to
+            // the Expedition; anything from before its start returns to passive credit.
+            long drainedNow = _reconciler.DrainPending();
+            long preSessionResidue = Math.Min(_pendingAtSessionStart, drainedNow);
+            _reconciler.RestorePending(preSessionResidue);
+            _pendingAtSessionStart = 0;
+
             DateTime endUtc = _clock.UtcNow;
             PersistCursor(endUtc);
             return Task.FromResult(new ActivitySessionResult
@@ -316,7 +336,7 @@ namespace WalkGame.Platform.Android
                 type = finished.sessionType,
                 startUtc = finished.startedAtUtc,
                 endUtc = endUtc,
-                acceptedSteps = CurrentSessionSteps(finished),
+                acceptedSteps = sessionSteps,
                 verifiedDistanceMeters = 0, // distance requires the optional location flow (Phase 4C)
                 verifiedMovingSeconds = System.Math.Max(0, (endUtc - finished.startedAtUtc).TotalSeconds),
                 cadenceConsistency = null,

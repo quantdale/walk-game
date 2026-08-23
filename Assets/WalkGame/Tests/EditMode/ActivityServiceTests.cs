@@ -195,5 +195,127 @@ namespace WalkGame.Tests
             _ledger.Credit(new VitalityCredit { amount = 500, reasonCode = WellKnownIds.ReasonCodes.DebugGrant });
             Assert.AreEqual(500, _ledger.GetBalance());
         }
+
+        // ---- Exactly-once movement rewards (campaign S8) ------------------------
+
+        private ActivitySessionResult MakeSessionResult(string sessionId, long steps)
+        {
+            return new ActivitySessionResult
+            {
+                sessionId = sessionId,
+                type = SessionType.Walk,
+                startUtc = _clock.UtcNow.AddMinutes(-30),
+                endUtc = _clock.UtcNow,
+                acceptedSteps = steps,
+                verifiedDistanceMeters = 0,
+                verifiedMovingSeconds = 1800,
+                trustScore = 0.2f, // below bonus threshold: isolates base-step accounting
+            };
+        }
+
+        [Test]
+        public void DuplicateSessionResult_IsNeverCreditedTwice()
+        {
+            var result = MakeSessionResult("session.dupe", 700);
+
+            long balanceAfterFirst = _activity.ProcessSessionResult(result, growthEligible: false).acceptedSteps > 0
+                ? _ledger.GetBalance()
+                : 0;
+            Assert.AreEqual(700, balanceAfterFirst);
+
+            // Same physical session re-delivered (crash-replay, double-tap, bug):
+            var replay = MakeSessionResult("session.dupe", 700);
+            var processedReplay = _activity.ProcessSessionResult(replay, growthEligible: false);
+
+            Assert.AreEqual(0, processedReplay.acceptedSteps, "re-delivery must not pay again");
+            Assert.AreEqual(700, _ledger.GetBalance());
+            Assert.AreEqual(700, _profile.lifetimeAcceptedSteps);
+        }
+
+        [Test]
+        public void PassiveSnapshots_AreSuppressed_WhileExpeditionActive()
+        {
+            _provider.StartSessionAsync(SessionType.Walk).GetAwaiter().GetResult();
+            _profile.activityState.activeSession = new ActiveSessionState();
+            _provider.DebugAddSteps(3000);
+
+            // Provider level: the session owns the counter stream.
+            var snapshot = _provider.ReadSnapshotAsync(new ActivityCursor()).GetAwaiter().GetResult();
+            Assert.IsNull(snapshot);
+
+            // Domain level (defense in depth): even a delivered snapshot is ignored.
+            long credited = _activity.ProcessPassiveSnapshot(PassiveSnapshot(3000));
+            Assert.AreEqual(0, credited);
+            Assert.AreEqual(0, _ledger.GetBalance());
+        }
+
+        [Test]
+        public void ExpeditionCompletion_PartitionsPassiveWindow_PastSessionEnd()
+        {
+            DateTime beforeSession = _clock.UtcNow;
+            _profile.activityState.lastSuccessfulSyncUtc = beforeSession.AddMinutes(-5);
+
+            var result = MakeSessionResult("session.partition", 400);
+            _activity.ProcessSessionResult(result, growthEligible: false);
+
+            Assert.IsNull(_profile.activityState.activeSession);
+            Assert.GreaterOrEqual(
+                _profile.activityState.lastSuccessfulSyncUtc.GetValueOrDefault(),
+                result.endUtc,
+                "passive windows must resume after the credited active window, not overlap it");
+        }
+
+        [Test]
+        public void OverlappingHistoricalWindows_WithSameBounds_CreditOnlyOnce()
+        {
+            // Crash-equivalent scenario: credit happened in memory but the cursor save
+            // failed; on restart the provider re-reads the SAME interval.
+            var windowStart = new DateTime(2026, 5, 1, 6, 30, 0, DateTimeKind.Utc);
+            var snapshotA = new ActivitySnapshot
+            {
+                providerId = "activity.ios.coremotion",
+                intervalStartUtc = windowStart,
+                intervalEndUtc = windowStart.AddHours(1),
+                stepCount = 6000,
+                sourceType = ActivitySourceType.PhoneSensor,
+                recordingType = ActivityRecordingType.Passive,
+                quality = new ActivityQuality { hasStepEvidence = true },
+            };
+            var snapshotB = new ActivitySnapshot
+            {
+                providerId = "activity.ios.coremotion",
+                intervalStartUtc = windowStart,
+                intervalEndUtc = windowStart.AddHours(1),
+                stepCount = 6000,
+                sourceType = ActivitySourceType.PhoneSensor,
+                recordingType = ActivityRecordingType.Passive,
+                quality = new ActivityQuality { hasStepEvidence = true },
+            };
+
+            Assert.AreEqual(6000, _activity.ProcessPassiveSnapshot(snapshotA));
+            Assert.AreEqual(0, _activity.ProcessPassiveSnapshot(snapshotB));
+            Assert.AreEqual(6000, _profile.lifetimeAcceptedSteps,
+                "the replayed window must add zero additional steps");
+        }
+
+        [Test]
+        public void EmptySnapshot_ProducesNothing()
+        {
+            Assert.AreEqual(0, _activity.ProcessPassiveSnapshot(null));
+            Assert.IsNull(_activity.ProcessSessionResult(null, growthEligible: false));
+            Assert.AreEqual(0, _ledger.GetBalance());
+        }
+
+        [Test]
+        public void BackwardClock_SessionMovingSeconds_ClampAtZero()
+        {
+            var start = _clock.UtcNow;
+            var session = new ActiveSessionState { startedAtUtc = start, sessionType = SessionType.Walk };
+            _clock.Advance(TimeSpan.FromMinutes(-10)); // device clock moved backward
+
+            double movingSeconds = System.Math.Max(0, (_clock.UtcNow - start).TotalSeconds);
+
+            Assert.AreEqual(0, movingSeconds);
+        }
     }
 }

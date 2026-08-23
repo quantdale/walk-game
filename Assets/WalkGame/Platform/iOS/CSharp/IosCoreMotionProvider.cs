@@ -196,6 +196,16 @@ namespace WalkGame.Platform.iOS
                 return null;
             }
 
+            // An active Expedition owns its movement window; passive historical queries
+            // overlapping it would double-credit the same steps (campaign S8).
+            lock (_gate)
+            {
+                if (_session != null || WG_IsSessionActive() != 0)
+                {
+                    return null;
+                }
+            }
+
             DateTime nowUtc = Clock.UtcNow;
             if (!_planner.TryPlan(cursor?.lastSuccessfulSyncUtc, nowUtc, out var since, out var until))
             {
