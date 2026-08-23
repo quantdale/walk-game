@@ -21,6 +21,10 @@ jobs:
         shell: pwsh
         run: ./scripts/verify-domain.ps1
 
-      # Unity compile/EditMode/PlayMode gates require an interactive editor license;
+      - name: Validate Unity project statically
+        shell: pwsh
+        run: ./scripts/verify-unity-static.ps1
+
+      # Unity compile/EditMode/PlayMode gates require an editor license;
       # scripts/verify-unity-editmode.ps1 is the documented local equivalent until a
       # licensed runner exists (see docs/TESTING_AND_PERFORMANCE.md).

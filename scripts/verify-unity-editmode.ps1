@@ -1,5 +1,5 @@
 #!/usr/bin/env pwsh
-# Unity batch-mode verification (campaign S3). Requires a local Unity 6000.3.x
+# Unity batch-mode verification (campaign S3). Requires the pinned Unity 6000.3.4f1
 # installation; the editor path is read from the UNITY_EDITOR_PATH environment
 # variable so no machine-specific path is committed.
 #
@@ -12,25 +12,34 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 
 if (-not $env:UNITY_EDITOR_PATH) {
-    Write-Error "UNITY_EDITOR_PATH is not set. Point it at the Unity 6000.3.x editor executable."
+    Write-Error "UNITY_EDITOR_PATH is not set. Point it at the Unity 6000.3.4f1 editor executable."
 }
 
 $resultsDir = Join-Path $repoRoot "TestResults"
 New-Item -ItemType Directory -Force -Path $resultsDir | Out-Null
 $logFile = Join-Path $resultsDir "editmode-run.log"
 $resultsFile = Join-Path $resultsDir "editmode-results.xml"
+foreach ($artifact in @($logFile, $resultsFile)) {
+    if (Test-Path -LiteralPath $artifact) {
+        Remove-Item -LiteralPath $artifact -Force
+    }
+}
+New-Item -ItemType File -Path $logFile -Force | Out-Null
 
-& $env:UNITY_EDITOR_PATH `
-    -batchmode `
-    -nographics `
-    -projectPath $repoRoot `
-    -runTests `
-    -testPlatform EditMode `
-    -testResults $resultsFile `
-    -logFile $logFile
-$unityExit = $LASTEXITCODE
+$unityArguments = @(
+    '-batchmode',
+    '-nographics',
+    '-projectPath', $repoRoot,
+    '-runTests',
+    '-testPlatform', 'EditMode',
+    '-testResults', $resultsFile,
+    '-logFile', $logFile)
+$unityProcess = Start-Process -FilePath $env:UNITY_EDITOR_PATH -ArgumentList $unityArguments -WindowStyle Hidden -Wait -PassThru
+$unityExit = $unityProcess.ExitCode
 
-Get-Content $logFile -Tail 40
+if (Test-Path $logFile) {
+    Get-Content $logFile -Tail 40
+}
 if ($unityExit -ne 0) {
     Write-Host "Unity EditMode run FAILED (exit $unityExit). See $logFile"
 } else {
