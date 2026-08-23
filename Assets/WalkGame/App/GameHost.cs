@@ -146,12 +146,14 @@ namespace WalkGame.App
             lightGo.transform.rotation = Quaternion.Euler(55f, 35f, 0f);
         }
 
-        private static PlayerProfile NewProfile()
+        private PlayerProfile NewProfile()
         {
+            // Creation timestamp flows through the injected clock like every other
+            // economic/lifecycle time so debug clock control stays deterministic.
             return new PlayerProfile
             {
                 schemaVersion = SaveSchemaVersions.Current,
-                createdAtUtc = DateTime.UtcNow,
+                createdAtUtc = Clock.UtcNow,
             };
         }
 

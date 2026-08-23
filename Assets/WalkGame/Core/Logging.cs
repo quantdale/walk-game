@@ -14,6 +14,8 @@ namespace WalkGame.Core
     /// <summary>
     /// Logging seam. Sensitive data (raw sensor values, GPS traces) must never be
     /// logged at Info or above; release builds can raise the minimum level.
+    /// Timestamp prefixes intentionally use wall clock: diagnostics only, never
+    /// economic or lifecycle state (campaign S9).
     /// </summary>
     public interface ILog
     {

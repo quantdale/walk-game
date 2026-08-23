@@ -96,6 +96,8 @@ namespace WalkGame.Persistence
                 placement.rotationQuarterTurns = ((placement.rotationQuarterTurns % 4) + 4) % 4;
 
                 // Timestamps far in the future are flagged for reconciliation.
+                // Intentional wall-clock comparison: corruption detection heuristic,
+                // not economic calculation (campaign S9).
                 if (building.restorationCompletedAtUtc.HasValue &&
                     building.restorationCompletedAtUtc.Value > DateTime.UtcNow.AddDays(1))
                 {

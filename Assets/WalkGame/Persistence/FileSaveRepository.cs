@@ -45,6 +45,9 @@ namespace WalkGame.Persistence
 
             try
             {
+                // Intentional wall clock: lastSavedAtUtc is save-file metadata for
+                // debugging, not economic time (campaign S9); injecting a clock here
+                // would not change any gameplay decision.
                 profile.lastSavedAtUtc = DateTime.UtcNow;
                 string payload = _serializer.Serialize(profile);
 
