@@ -7,7 +7,7 @@ Last updated: 2026-08-23
 
 ## Verification status
 
-- Domain test suite: **62/62 passing** via
+- Domain test suite: **64/64 passing** via
   `dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj`.
   The same sources compile as Unity EditMode tests (`WalkGame.Tests.EditMode`).
 - Unity editor compile/play and device builds: **not yet executed** (no editor/license
@@ -69,8 +69,9 @@ yet run** (permission flows, reboot/resume behavior on hardware).
 
 ProductionService with checkpoint math, offline cap (8h), backward-clock clamp,
 per-producer storage caps, tier multipliers, collection API - deterministic tests pass.
-Collection UI surfaces through HUD resource readout; dedicated collect buttons are a
-small remaining polish item.
+Collection UI surfaces through the HUD resource readout and dedicated per-producer
+collect buttons (`HudController` collect bar + `ProductionService.GetPendingCollectables`
+/ `CollectAll`), refreshed on the activity ticker cadence.
 
 ## Phase 6 - Vertical-slice content
 

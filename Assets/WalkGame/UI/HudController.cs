@@ -1,12 +1,15 @@
 using UnityEngine;
 using UnityEngine.UI;
+using WalkGame.Gameplay;
 
 namespace WalkGame.UI
 {
     /// <summary>
     /// Runtime HUD construction + binding. Built from code so scenes stay content-only.
-    /// Shows Vitality, key resources, and the Builder/Explore toggle; the debug menu is
-    /// opened via UiContext and gated there by profile settings (AGENT_EXECUTION_GUIDE 20).
+    /// Shows Vitality, key resources, and the Builder/Explore toggle; dedicated collect
+    /// buttons appear whenever producer stores hold output (ROADMAP Phase 5). The debug
+    /// menu is opened via UiContext and gated there by profile settings
+    /// (AGENT_EXECUTION_GUIDE 20).
     /// </summary>
     public sealed class HudController : MonoBehaviour
     {
@@ -14,6 +17,7 @@ namespace WalkGame.UI
         private Text _resourceLabel;
         private Text _modeLabel;
         private Button _toggleButton;
+        private RectTransform _collectBar;
         private UiContext _context;
 
         public void Bind(UiContext context)
@@ -41,6 +45,15 @@ namespace WalkGame.UI
 
             _toggleButton = CreateButton(panel.transform, "ExploreToggle", new Vector2(340f, 0f), new Vector2(190f, 56f), "Explore",
                 () => _context?.ToggleExploreRequested?.Invoke());
+
+            var barGo = new GameObject("CollectBar", typeof(RectTransform));
+            barGo.transform.SetParent(canvas.transform, false);
+            _collectBar = barGo.GetComponent<RectTransform>();
+            _collectBar.anchorMin = new Vector2(0.5f, 1f);
+            _collectBar.anchorMax = new Vector2(0.5f, 1f);
+            _collectBar.pivot = new Vector2(0f, 1f);
+            _collectBar.anchoredPosition = new Vector2(-440f, -116f);
+            _collectBar.sizeDelta = new Vector2(280f, 0f);
 
             Refresh();
         }
@@ -80,6 +93,40 @@ namespace WalkGame.UI
             }
 
             _resourceLabel.text = $"{resources}Steps {profile.lifetimeAcceptedSteps}";
+
+            RefreshCollectBar();
+        }
+
+        private void RefreshCollectBar()
+        {
+            if (_collectBar == null)
+            {
+                return;
+            }
+
+            for (int i = _collectBar.childCount - 1; i >= 0; i--)
+            {
+                Destroy(_collectBar.GetChild(i).gameObject);
+            }
+
+            var pending = _context?.GetCollectables?.Invoke();
+            if (pending == null || pending.Count == 0)
+            {
+                _collectBar.gameObject.SetActive(false);
+                return;
+            }
+
+            _collectBar.gameObject.SetActive(true);
+            int index = 0;
+            foreach (var item in pending)
+            {
+                string resourceShort = item.resourceId.Replace("resource.", string.Empty);
+                CreateButton(_collectBar, $"Collect_{item.producerId}",
+                    new Vector2(0f, -22f - index * 52f), new Vector2(280f, 44f),
+                    $"Collect {resourceShort} {item.stored}",
+                    () => _context?.CollectProducerRequested?.Invoke(item.producerId));
+                index++;
+            }
         }
 
         internal static RectTransform CreatePanel(Transform parent, string name,

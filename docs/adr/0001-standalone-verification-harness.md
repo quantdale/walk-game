@@ -23,7 +23,8 @@ All engine-free assemblies are compiled twice:
 
 1. Inside Unity via asmdefs (`noEngineReferences: true` where applicable).
 2. Outside Unity by `verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj`,
-   which links the exact same `.cs` files and runs them under NUnit on .NET 9.
+   which links the exact same `.cs` files and runs them under NUnit on the installed
+   .NET SDK (net8.0, pinned to C# 9 to match Unity's scripting runtime).
 
 EditMode tests under `Assets/WalkGame/Tests/EditMode/` are written against NUnit only
 (no `UnityEngine.TestTools`) so the same files execute in both environments.

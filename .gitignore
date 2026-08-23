@@ -13,6 +13,7 @@
 .vs/
 .idea/
 *.csproj
+!verification/**/*.csproj
 *.sln
 *.suo
 *.user

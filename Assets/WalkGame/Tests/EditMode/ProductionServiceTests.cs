@@ -133,15 +133,72 @@ namespace WalkGame.Tests
         public void UpgradeTier_MultipliesProduction()
         {
             var region = _profile.worldState.GetOrCreateRegionState(TestContent.RegionId);
-            var producer = region.producerStates[TestContent.PumpProducerId];
 
             // Tier multiplier comes from the producer definition (tier map), tier 2 -> 1.5x.
             region.buildingStates[TestContent.PumpInstanceId].upgradeTier = 2;
 
             _clock.Advance(TimeSpan.FromHours(2));
-            var result = _production.Accrue(TestContent.RegionId, producer);
+            var result = _production.Accrue(TestContent.RegionId, region.producerStates[TestContent.PumpProducerId]);
 
             Assert.AreEqual(30, result.produced); // 10 * 1.5 * 2
+        }
+
+        [Test]
+        public void PendingCollectables_ListNonEmptyStores_AndClearAfterCollect()
+        {
+            var region = _profile.worldState.GetOrCreateRegionState(TestContent.RegionId);
+
+            Assert.AreEqual(0, _production.GetPendingCollectables(TestContent.RegionId).Count);
+
+            _clock.Advance(TimeSpan.FromHours(3));
+            _production.AccrueAll(TestContent.RegionId);
+
+            var pending = _production.GetPendingCollectables(TestContent.RegionId);
+            Assert.AreEqual(1, pending.Count);
+            Assert.AreEqual(TestContent.PumpProducerId, pending[0].producerId);
+            Assert.AreEqual(WellKnownIds.Resources.Water, pending[0].resourceId);
+            Assert.AreEqual(30, pending[0].stored);
+
+            _production.Collect(TestContent.RegionId, TestContent.PumpProducerId);
+            Assert.AreEqual(0, _production.GetPendingCollectables(TestContent.RegionId).Count);
+        }
+
+        [Test]
+        public void CollectAll_GrantsEveryStore_AndEmptiesThem()
+        {
+            const string compostProducerId = "producer.test.compost";
+            _catalog.Producers.Add(new ProducerDefinition
+            {
+                producerId = compostProducerId,
+                resourceId = WellKnownIds.Resources.Biomass,
+                baseRatePerHour = 5.0,
+                storageCap = 500,
+                offlineCapHours = 8.0,
+                tierMultipliers = { { 1, 1.0 } },
+            });
+            _catalog.Index();
+
+            var region = _profile.worldState.GetOrCreateRegionState(TestContent.RegionId);
+            var grove = region.GetOrCreateBuildingState(TestContent.GroveInstanceId, "building.grove");
+            grove.lifecycleState = BuildingLifecycleState.Restored;
+            region.producerStates[compostProducerId] = new ProducerState
+            {
+                producerId = compostProducerId,
+                buildingInstanceId = TestContent.GroveInstanceId,
+                lastCheckpointUtc = _clock.UtcNow,
+            };
+
+            _clock.Advance(TimeSpan.FromHours(3));
+            _production.AccrueAll(TestContent.RegionId); // pump: 30 water, compost: 15 biomass
+
+            var results = _production.CollectAll(TestContent.RegionId);
+
+            Assert.AreEqual(2, results.Count);
+            Assert.AreEqual(30, _profile.resources[WellKnownIds.Resources.Water]);
+            Assert.AreEqual(15, _profile.resources[WellKnownIds.Resources.Biomass]);
+            Assert.AreEqual(0, region.producerStates[TestContent.PumpProducerId].storedOutput);
+            Assert.AreEqual(0, region.producerStates[compostProducerId].storedOutput);
+            Assert.AreEqual(0, _production.GetPendingCollectables(TestContent.RegionId).Count);
         }
     }
 }

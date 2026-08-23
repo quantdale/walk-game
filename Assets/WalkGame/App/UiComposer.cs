@@ -36,6 +36,8 @@ namespace WalkGame.App
                 GetProfile = () => host.Profile,
                 GetIsExplore = () => host.Modes.Current == GameMode.ExploreMode,
                 ToggleExploreRequested = ToggleMode,
+                GetCollectables = GetCollectables,
+                CollectProducerRequested = CollectProducer,
             });
 
             var projectsGo = new GameObject("ProjectPanel");
@@ -129,6 +131,33 @@ namespace WalkGame.App
             {
                 _flow.EnterBuilder();
             }
+        }
+
+        /// <summary>
+        /// Accrual happens here so collect amounts are live at every HUD refresh; the
+        /// checkpoint math is deterministic and capped, so extra accrual passes cannot
+        /// over-produce (TECHNICAL_ARCHITECTURE 16).
+        /// </summary>
+        private IReadOnlyList<PendingCollect> GetCollectables()
+        {
+            var host = GameHost.Current;
+            string regionId = host.Profile.worldState.currentRegionId;
+            host.Production.AccrueAll(regionId);
+            return host.Production.GetPendingCollectables(regionId);
+        }
+
+        private void CollectProducer(string producerId)
+        {
+            var host = GameHost.Current;
+            var result = host.Production.Collect(host.Profile.worldState.currentRegionId, producerId);
+            if (result.collected <= 0)
+            {
+                return;
+            }
+
+            host.Persist();
+            _flow.Presenter?.Refresh();
+            RefreshAll();
         }
 
         private IReadOnlyList<RestorationProjectView> BuildProjectViews()

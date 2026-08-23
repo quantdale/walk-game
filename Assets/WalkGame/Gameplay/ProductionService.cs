@@ -12,11 +12,19 @@ namespace WalkGame.Gameplay
         public bool clockAnomaly;
     }
 
-    public struct CollectResult
-    {
-        public string resourceId;
-        public long collected;
-    }
+        public struct CollectResult
+        {
+            public string resourceId;
+            public long collected;
+        }
+
+        /// <summary>Read-only view of one producer store waiting to be collected.</summary>
+        public struct PendingCollect
+        {
+            public string producerId;
+            public string resourceId;
+            public long stored;
+        }
 
     /// <summary>
     /// Checkpoint-based passive production (TECHNICAL_ARCHITECTURE 16). Nothing is
@@ -134,6 +142,62 @@ namespace WalkGame.Gameplay
             _rewards.GrantResource(result.resourceId, result.collected);
             producer.storedOutput = 0;
             return result;
+        }
+
+        /// <summary>
+        /// Stores currently holding output, for collection UI. Pure read: accrual must
+        /// happen through Accrue/AccrueAll so callers control when checkpoints move.
+        /// Leftovers from buildings that later became ruins remain collectible, matching
+        /// Collect semantics.
+        /// </summary>
+        public List<PendingCollect> GetPendingCollectables(string regionId)
+        {
+            var region = _profile.worldState.GetOrCreateRegionState(regionId);
+            var pending = new List<PendingCollect>();
+            foreach (var producer in region.producerStates.Values)
+            {
+                if (producer == null || producer.storedOutput <= 0)
+                {
+                    continue;
+                }
+
+                var definition = _catalog.GetProducer(producer.producerId);
+                if (definition == null)
+                {
+                    continue;
+                }
+
+                pending.Add(new PendingCollect
+                {
+                    producerId = producer.producerId,
+                    resourceId = definition.resourceId,
+                    stored = producer.storedOutput,
+                });
+            }
+
+            pending.Sort((a, b) =>
+            {
+                int byResource = string.CompareOrdinal(a.resourceId, b.resourceId);
+                return byResource != 0 ? byResource : string.CompareOrdinal(a.producerId, b.producerId);
+            });
+            return pending;
+        }
+
+        /// <summary>Collects every non-empty store; each entry goes through Collect.</summary>
+        public List<CollectResult> CollectAll(string regionId)
+        {
+            var region = _profile.worldState.GetOrCreateRegionState(regionId);
+            var results = new List<CollectResult>();
+            foreach (var producerId in new List<string>(region.producerStates.Keys))
+            {
+                var result = Collect(regionId, producerId);
+                if (result.collected > 0)
+                {
+                    results.Add(result);
+                }
+            }
+
+            return results;
         }
 
         /// <summary>Ensures every restored building with a producer definition has state.</summary>

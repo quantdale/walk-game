@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <!-- Match the Unity 6.x scripting runtime so the same sources cannot drift
+         between this gate and the editor compile. Raise both together. -->
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>WalkGame.Domain.Tests</RootNamespace>
+    <AssemblyName>WalkGame.Domain.Tests</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <!-- Unity Test Framework embeds NUnit 3.x; stay on the matching major so
+         classic assert syntax behaves identically in both environments. -->
+    <PackageReference Include="NUnit" Version="3.14.0" />
+    <PackageReference Include="NUnit3TestAdapter" Version="4.6.0" />
+    <!-- Mirrors Packages/manifest.json (com.unity.nuget.newtonsoft-json). -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <!-- Compile the exact engine-free sources the Unity asmdefs compile
+       (ADR 0001). Keep these globs in sync with the domain asmdef set:
+       Core, Building, Gameplay, Activity, Persistence, Content. -->
+  <ItemGroup>
+    <Compile Include="../../Assets/WalkGame/Core/**/*.cs" LinkBase="Sources/Core" />
+    <Compile Include="../../Assets/WalkGame/Building/**/*.cs" LinkBase="Sources/Building" />
+    <Compile Include="../../Assets/WalkGame/Gameplay/**/*.cs" LinkBase="Sources/Gameplay" />
+    <Compile Include="../../Assets/WalkGame/Activity/**/*.cs" LinkBase="Sources/Activity" />
+    <Compile Include="../../Assets/WalkGame/Persistence/**/*.cs" LinkBase="Sources/Persistence" />
+    <Compile Include="../../Assets/WalkGame/Content/**/*.cs" LinkBase="Sources/Content" />
+    <Compile Include="../../Assets/WalkGame/Tests/EditMode/**/*.cs" LinkBase="Tests" />
+  </ItemGroup>
+
+</Project>

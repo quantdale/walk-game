@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using WalkGame.Core;
+using WalkGame.Gameplay;
 
 namespace WalkGame.UI
 {
@@ -14,6 +16,8 @@ namespace WalkGame.UI
         public Func<bool> GetIsExplore;
         public Action ToggleExploreRequested;
         public Action OpenDebugMenu;
+        public Func<IReadOnlyList<PendingCollect>> GetCollectables;
+        public Action<string> CollectProducerRequested;
         public bool DebugToolsVisible;
     }
 }

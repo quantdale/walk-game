@@ -9,8 +9,9 @@ namespace WalkGame.App
 {
     /// <summary>
     /// Drives the activity pipeline at gameplay cadence: passive snapshots on resume and
-    /// periodically while playing, then persists. All reward logic stays in the domain;
-    /// this is pure scheduling glue.
+    /// periodically while playing, then persists. Also re-fires the processed event each
+    /// poll so idle production and the HUD collect buttons stay live between snapshots.
+    /// All reward logic stays in the domain; this is pure scheduling glue.
     /// </summary>
     public sealed class ActivityTicker : MonoBehaviour
     {
@@ -33,14 +34,14 @@ namespace WalkGame.App
             };
 
             var snapshot = host.Provider.ReadSnapshotAsync(cursor).Result;
-            if (snapshot == null)
+            if (snapshot != null)
             {
-                return;
+                host.Activity.ProcessPassiveSnapshot(snapshot);
+                host.Profile.activityState.providerCursor = null; // debug provider keeps no extra cursor
+                host.Persist();
             }
 
-            host.Activity.ProcessPassiveSnapshot(snapshot);
-            host.Profile.activityState.providerCursor = null; // debug provider keeps no extra cursor
-            host.Persist();
+            // Fire even without a new snapshot: listeners refresh production/UI on cadence.
             ActivityProcessed?.Invoke();
         }
 
