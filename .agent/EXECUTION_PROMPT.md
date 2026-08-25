@@ -1,22 +1,22 @@
-# Execution Prompt — M8.3 Movement Delivery Durability & Activity Write Discipline
+# Execution Prompt — M8.4 Runtime Orchestration Durability & Headless Certification
 
-**Status:** COMPLETE  
-**Planned-From:** `main@15384b6bbf106b3a910c9b5a4152bcb562557fc9`  
+**Status:** ACTIVE  
+**Planned-From:** `main@c7d18f766438eb50fbb3854d88a9972fdbc5dc32`  
 **Target branch:** `main`  
-**Campaign type:** non-hardware hardening / movement-state integrity  
-**Priority:** High — exactly-once movement correctness must also avoid preventable movement loss on persistence failure
+**Campaign type:** non-hardware hardening / application-orchestration correctness / verification convergence  
+**Priority:** High — M8.3’s domain/provider transaction contract is correct in the standalone suite, but its real Unity orchestration is not currently covered by the 165-test headless gate and a concrete rollback-ordering defect can resurrect Expedition suppression after a failed commit
 
 ## Mission
 
-Execute one coherent hardening campaign that closes the remaining activity-to-persistence transaction gap left deliberately deferred by M8.2.
+Execute one coherent hardening campaign that closes the remaining gap between the engine-free M8.3 movement durability contract and the actual Unity application code that sequences provider calls, canonical mutations, persistence rollback, lifecycle autosave, and player-facing Expedition state.
 
-The product already protects against duplicate movement credit aggressively, and M8.1 makes profile mutations transactional at the save boundary. The remaining defect class is on the **provider side**: Android and the debug provider can consume/drain movement before `GameHost.CommitChanges()` proves that the corresponding reward, dedup state, and cursor are durable. If the save then fails and the profile is rolled back, the in-memory provider can remain advanced and the same movement may no longer be available to retry in that process. M8.2 documented this as direction-safe (drop, never double), but it is still player-progress loss.
+M8.3 established a strong provider contract: prepare movement without irreversible consumption, commit canonical state, then acknowledge or reject the provider delivery. That contract is now well-covered at the domain/provider level. The unresolved risk is the **application orchestration layer** (`ActivityTicker`, `ExpeditionController`, `GameHost` lifecycle/persistence glue, and adjacent presentation refresh paths). The standalone .NET project deliberately compiles `Core`, `Building`, `Gameplay`, `Activity`, `Persistence`, `Content`, and EditMode tests; it does **not** compile or execute the Unity `App` orchestration classes. PlayMode coverage exists, but remains UNVERIFIED because the environment has no licensed Unity editor session.
 
-This campaign must make movement delivery participate coherently in the durability outcome while preserving the stronger invariant:
+A planner audit of current `main@c7d18f7` found a concrete failure-ordering defect that demonstrates this is not merely a coverage-quality campaign:
 
-> One piece of real movement is credited at most once, and a transient persistence failure must not make already-observed base movement permanently disappear when it can still be recovered safely.
+> If an Expedition `activeSession` marker was previously persisted by lifecycle autosave, `ExpeditionController` clears it in memory before processing the completion result, then calls `CommitChanges()`. A failed commit reverts the profile in place from disk, which can restore the old `activeSession` marker. The provider is then correctly rejected and returns the session’s base movement to the passive stream, but the resurrected canonical marker can suppress that passive delivery in the same process. The UI says the steps remain safe and will be credited once saving works again, but the recovered movement may remain blocked until a later boot-time interrupted-session repair.
 
-Also remove the documented `ActivityTicker` cadence write when the passive pipeline produced no durable profile mutation. Do not turn this into generic dirty tracking or unrelated performance work.
+This campaign must repair that class of defect, prove the complete sequencing with deterministic headless tests, and audit the whole repository for equivalent orchestration failures. Do not simply patch one line in `ExpeditionController`; make the transaction/lifecycle protocol explicit enough that future provider, persistence, or UI changes cannot silently reintroduce the same split-brain state.
 
 ## Absolute repository boundary
 
@@ -30,26 +30,31 @@ sh scripts/assert-repo-identity.sh
 ./scripts/Assert-RepoIdentity.ps1
 ```
 
-Never transfer prompts, SHAs, status, source, or assumptions from the sibling repository.
+Never transfer prompts, SHAs, assumptions, source, or campaign state from the sibling repository.
 
 ## Confirmed planner findings — starting evidence, not the whole audit
 
-The planner reconciled current `main`, the completed M8.2 prompt/status record, recent commits, current branch/PR state, the activity provider abstraction, passive ticker path, Android/iOS/debug providers, `ActivityService`, `GameHost.CommitChanges()`, and the existing standalone test harness.
+The planner reconciled the completed M8.3 prompt/report, `main@c7d18f7`, recent commits, current PR/issue state, `AGENTS.md`, `.agent/PLANNER_HANDOFF.md`, `docs/IMPLEMENTATION_STATUS.md`, `docs/ROADMAP.md`, `IActivityProvider`, `ActivityService`, `PersistenceCoordinator`, `ProfileStateCopier`, `ActivityTicker`, `ExpeditionController`, `GameHost`, Android/iOS provider implementations, the M8.3 movement durability tests, the PlayMode runtime certification suite, and the standalone test project/CI shape.
 
-1. `.agent/EXECUTION_PROMPT.md` is COMPLETE for M8.2; there is no ACTIVE campaign to resume.
-2. At planning time there are no open PRs and `main@15384b6b` is the authoritative line.
-3. M8.2 explicitly deferred two related items:
-   - Android movement already drained before a failed profile commit is currently dropped rather than doubled.
-   - `ActivityTicker` can issue a no-op commit when passive processing produced no durable mutation.
-4. `IActivityProvider` exposes `ReadSnapshotAsync(ActivityCursor)` and session start/poll/stop, but there is no provider delivery acknowledgment/rejection phase tied to application durability.
-5. `ActivityTicker.ReconcileRoutine()` obtains a snapshot, mutates reward/dedup/cursor state through `ActivityService.ProcessPassiveSnapshot()`, then calls `host.CommitChanges()`. The provider read has already completed before the save result is known.
-6. `AndroidStepSensorProvider.ReadSnapshotAsync()` folds the raw cumulative counter, calls `AndroidCounterReconciler.DrainPending()`, mutates the profile-backed Android raw-counter cursor, and returns the snapshot before the enclosing `CommitChanges()` resolves. A profile rollback does not automatically rewind the provider's private reconciler state.
-7. `DebugActivityProvider.ReadSnapshotAsync()` similarly zeros its passive cumulative counter when read, before durability is known.
-8. `IosCoreMotionProvider` is naturally more retryable because it performs historical queries from the persisted successful-sync cursor; a failed profile commit leaves that durable cursor behind so the same time window can be queried again. It still must conform to the final common provider contract without regressing historical dedup behavior.
-9. Android Expedition completion also partitions/drains the folded counter and persists provider cursor facts before the application commit is known. Therefore this is not only a passive-poll problem; active-session completion must be audited under the same durability model.
-10. `ActivityService.ProcessPassiveSnapshot()` returns accepted steps, not an explicit mutation outcome. `0` can mean several different things (suppression, duplicate, zero-step delivery, cursor-only/dedup mutation, or true no-op), so the caller cannot safely decide whether a durable write is required from that value alone.
-11. `TECHNICAL_ARCHITECTURE.md` requires `VitalityLedger` credit and activity cursor persistence to be atomic and requires persistence failure to roll back/reload application state. M8.1 now enforces the profile half of that contract; provider-side consumption remains outside it.
-12. The standalone domain suite compiles engine-free `Core`, `Building`, `Gameplay`, `Activity`, `Persistence`, `Content`, and EditMode tests. Keep new transaction mechanics engine-free where practical so the critical semantics are certifiable without a Unity license or physical device.
+1. `.agent/EXECUTION_PROMPT.md` is COMPLETE for M8.3; there is no ACTIVE campaign to resume.
+2. At planning time there are no open PRs/issues relevant to this work and `main@c7d18f7` is the authoritative line.
+3. M8.3 reports 165/165 standalone tests passing and explicitly leaves Unity EditMode/PlayMode/device tiers UNVERIFIED because the editor license/build modules/hardware are unavailable.
+4. `verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj` compiles engine-free `Core`, `Building`, `Gameplay`, `Activity`, `Persistence`, `Content`, and EditMode tests, but not `Assets/WalkGame/App/**`, `World/**`, or the Unity platform/runtime orchestration surface.
+5. `.github/workflows/domain-tests.yml` therefore cannot compile or execute `ActivityTicker`, `ExpeditionController`, `GameHost`, `AppFlowController`, `FeedbackController`, or other Unity application glue. The repository’s most important runtime sequencing is currently protected only by static checks plus PlayMode tests that cannot run in this environment.
+6. `RuntimeCertificationTests` contains valuable PlayMode scenarios for bootstrap, activity, save/reload, stale Expedition recovery, and blocked persistence, but they remain UNVERIFIED until a licensed editor run is possible.
+7. `ExpeditionController.RunExpedition()` currently performs this completion order:
+   - provider `StopSessionAsync()`;
+   - set controller inactive;
+   - `host.Activity.AbandonExpedition()` (clears canonical `activeSession` in memory);
+   - process the session result;
+   - `host.CommitChanges()`;
+   - `host.Provider.ResolveSessionCompletion(sessionId, durable)`.
+8. `PersistenceCoordinator.Commit()` reloads the last durable profile and calls `ProfileStateCopier.CopyInto()` after a failed save. `CopyActivityState()` explicitly restores `activityState.activeSession` from durable state.
+9. `GameHost` lifecycle autosave (`OnApplicationPause` / lost focus) uses `Persist()` and can durably store the in-progress `activeSession` marker while an Expedition is running. Therefore the M8.4 planner defect is reachable: resume -> finish -> reward commit fails -> rollback restores the previously durable marker -> provider rejects completion and returns base movement -> passive `ActivityService.ProcessPassiveSnapshot()` sees `activeSession != null` and suppresses the delivery.
+10. The existing M8.3 `MovementDeliveryDurabilityTests` do not reproduce the real controller ordering. One failure test abandons the Expedition before provider rejection without a persistence rollback; another performs rollback and then explicitly calls `AbandonExpedition()` **after** rollback before retry. The runtime controller does not currently perform that post-rollback repair.
+11. M8.3’s stated acceptance explicitly requires rejected session completion not to leave `activeSession` suppression stuck and requires same-process recovery. The current orchestration can violate that requirement despite all 165 headless tests passing.
+12. `ActivityTicker` also owns unresolved orchestration semantics that must be audited rather than assumed correct: timeout vs late provider completion, provider resolution exactly once, host/profile replacement while asynchronous work is in flight, persistence transitioning to blocked state, focus/pause storms, and `ActivityProcessed` refresh behavior after failures/suppression.
+13. The nominal roadmap next steps are mostly blocked by current environment prerequisites (licensed Unity runtime, Android Build Support/real step sensor, macOS/Xcode, physical-device performance, closed playtest). This makes application-layer correctness and deterministic certification the highest-value unblocked continuation.
 
 Treat these as seed findings. Re-audit the entire affected system before editing and preserve any equivalent fix that landed after this prompt was planned.
 
@@ -59,7 +64,7 @@ Before implementation:
 
 1. Prove repository identity with the guard above.
 2. Read `AGENTS.md` and `.agent/PLANNER_HANDOFF.md`.
-3. Read the project docs in repository-required order, with special attention to:
+3. Read project docs in repository-required order, especially:
    - `docs/MASTER_PLAN.md`
    - `docs/ROADMAP.md`
    - `docs/TECHNICAL_ARCHITECTURE.md`
@@ -69,208 +74,229 @@ Before implementation:
    - `docs/PRIVACY_SAFETY_ANTI_CHEAT.md`
    - `docs/TESTING_AND_PERFORMANCE.md`
    - `docs/IMPLEMENTATION_STATUS.md`
-   - ADR 0005, ADR 0007, ADR 0008, and any newer relevant ADR.
-4. Record branch, HEAD, upstream, worktree status, `origin/main`, and recent history. Fetch before relying on old state.
-5. Acquire the repository writer lease before the first mutation. One writer = one branch = one worktree. Use a campaign branch such as `agent/walk-game/m8.3-<session-id>`; do not share a mutable checkout with another agent.
-6. If `origin/main` advanced beyond `15384b6b`, inspect every intervening commit/diff and reconcile this prompt against the new implementation before changing code. Do not redo landed fixes.
-7. Recheck open PRs/issues and any useful in-flight work.
-8. Run all currently available baseline gates and record exact evidence. Do not copy old counts as if they were produced now.
+   - ADR 0007, ADR 0008, ADR 0009, and any newer relevant ADR.
+4. Record branch, HEAD, upstream, worktree status, `origin/main`, recent history, and open PRs/issues. Fetch before relying on this planner’s state.
+5. Acquire the repository writer lease before the first mutation. One writer = one branch = one worktree. Use a campaign branch such as `agent/walk-game/m8.4-<session-id>`.
+6. If `origin/main` advanced beyond `c7d18f7`, inspect every intervening commit/diff and reconcile this prompt against the new implementation before changing code. Do not redo landed fixes.
+7. Run every currently available baseline gate and record exact evidence. Do not copy M8.3 counts as if produced by this campaign.
+8. Do not attempt to bypass Unity licensing, UAC/elevation, Android module installation permissions, signing, or device requirements. Those tiers stay honestly UNVERIFIED when unavailable.
 
-## Workstream A — whole-system movement/durability audit
+## Workstream A — whole-repository orchestration and transaction audit
 
-Build a complete map before choosing the final design. Inspect the whole repository impact, not only the files named below.
+Build a complete map before choosing the final implementation shape. Inspect the whole repository impact, not only the seed files.
 
 At minimum trace:
 
 - `Assets/WalkGame/App/ActivityTicker.cs`
 - `Assets/WalkGame/App/ExpeditionController.cs`
 - `Assets/WalkGame/App/GameHost.cs`
+- `Assets/WalkGame/App/TaskObservation.cs`
+- `Assets/WalkGame/App/AppFlowController.cs`
+- `Assets/WalkGame/App/FeedbackController.cs`
+- `Assets/WalkGame/App/SaveRecoveryController.cs`
+- `Assets/WalkGame/UI/UiComposer.cs` and Expedition/HUD presentation paths
 - `Assets/WalkGame/Activity/IActivityProvider.cs`
 - `Assets/WalkGame/Activity/ActivityService.cs`
-- `Assets/WalkGame/Activity/AndroidCounterReconciler.cs`
 - `Assets/WalkGame/Activity/DebugActivityProvider.cs`
-- `Assets/WalkGame/Platform/Android/CSharp/AndroidStepSensorProvider.cs`
-- `Assets/WalkGame/Platform/iOS/CSharp/IosCoreMotionProvider.cs`
-- persistence coordinator/repository/profile copier/serializer/validator/migrations
-- `ActivitySyncState`, dedup containers, active-session state, provider cursor fields
-- all activity, interruption-recovery, save-integrity, permission, and runtime certification tests
-- every UI/feedback path that reacts to passive/Expedition completion.
+- Android/iOS provider start/poll/stop/prepare/resolve implementations
+- `PersistenceCoordinator`, `ProfileStateCopier`, `FileSaveRepository`, serializer/validator/migrations
+- every lifecycle persistence entry point (`Persist`, `CommitChanges`, pause/focus/destroy)
+- all EditMode/runtime tests touching activity, persistence, interruption recovery, permissions, feedback, and application composition
+- the standalone verification project, asmdefs, CI, and static verification scripts.
 
 Search the entire repository for every use of:
 
-`ReadSnapshotAsync`, `StartSessionAsync`, `StopSessionAsync`, `DrainPending`, `RestorePending`, `PersistCursor`, `lastSuccessfulSyncUtc`, `androidLastRawStepCounter`, `creditedIntervals`, `creditedSessionIds`, `activeSession`, `CommitChanges`, `Persist`, lifecycle autosave, and activity-related domain events.
+`BeginExpedition`, `AbandonExpedition`, `RecoverInterruptedSession`, `ProcessSessionResult`, `PreparePassiveDeliveryAsync`, `ResolvePreparedDelivery`, `ResolveSessionCompletion`, `StartSessionAsync`, `PollSessionAsync`, `StopSessionAsync`, `CommitChanges`, `Persist`, `PersistenceReverted`, `DurableCommitResolved`, `activeSession`, lifecycle callbacks, coroutine/task observation, and timeout/fault paths.
 
-Audit both **duplicate risk** and **loss risk** across:
+Audit at least these state combinations:
 
-- successful passive reconciliation;
-- duplicate/overlapping passive delivery;
-- provider read fault/timeout/cancellation;
-- save failure with in-place profile rollback;
-- fatal mid-session persistence loss;
-- process death before and after a provider delivery is prepared;
-- app pause/focus storms;
-- Android raw-counter reboot/reset/anomaly rebaseline;
-- Expedition start, completion, failure, abandonment, and interrupted-session boot recovery;
-- persisted cursor vs provider-private runtime state divergence.
+- Expedition starts and never backgrounds before completion;
+- Expedition marker becomes durable due to focus/pause autosave;
+- completion reward commit succeeds;
+- completion reward commit fails and reverts to a durable active marker;
+- repeated transient save failures after provider movement was returned to passive;
+- fatal persistence loss during completion;
+- stop task fault/cancel/null result;
+- app pause/focus during start, poll, stop, or passive preparation;
+- scene/host destruction or recovery recomposition while a task is in flight;
+- passive preparation timeout followed by a late task completion;
+- provider resolution throwing or receiving stale/repeated inputs;
+- duplicate durable session result;
+- process death before/after session stop and before/after commit;
+- iOS historical recovery vs Android/debug provider-private claims;
+- feedback/UI state after rollback, retry, duplicate, and blocked transitions.
 
-Fix any Critical/High correctness defect exposed by this audit and any Medium defect required to make the transaction model coherent. Do not expand into unrelated features.
+Fix every discovered Critical/High correctness defect and any Medium state-integrity defect required to make the lifecycle model coherent. Do not expand into unrelated features.
 
-## Workstream B — explicit movement-delivery durability contract
+## Workstream B — repair Expedition completion rollback ordering
 
-Establish one coherent provider/application protocol so movement is not irreversibly consumed before the durability outcome is known.
+Reproduce the planner defect deterministically first, then fix it at the correct abstraction boundary.
 
-The exact type names are flexible. A prepared-delivery/receipt/lease model is one reasonable shape, but do not implement ceremony for its own sake.
+Mandatory pre-fix regression scenario:
+
+1. Create/persist a profile with a non-null `activityState.activeSession`, representing an Expedition marker durably saved during a background/focus event.
+2. Resume the same logical session and obtain a stable provider completion result whose base movement is held pending resolution.
+3. Clear/complete the in-memory session as the real controller does.
+4. Process the completion result.
+5. Inject a save failure so `PersistenceCoordinator` reverts the live profile from disk and therefore restores the durable `activeSession` marker.
+6. Resolve the provider completion as non-durable so its base movement returns to retryable/passive ownership.
+7. Prove the pre-campaign behavior suppresses or strands that recovered movement in the same process because the canonical marker was resurrected.
+8. After the fix, prove the exact same movement becomes retryable/creditable exactly once without requiring a process restart, without duplicate reward, and without pretending the failed completion was durable.
+
+Required invariants after the fix:
+
+- Provider/session reality and canonical `activeSession` cannot remain split-brain after rollback.
+- A failed Expedition reward commit must never leave a stale canonical marker that permanently suppresses the provider’s rejected base movement in the same process.
+- Retrying while storage is still failing must remain safe: no double credit, no silent movement loss, no permanent suppression, and no false success UI.
+- If a separate durable session-closure transition is required, define its ordering and crash semantics explicitly.
+- If an in-memory post-rollback repair is required, prove how it converges on the next successful commit and how process death remains safe.
+- Do not weaken boot-time interrupted-session recovery; it remains a last-resort crash repair, not the normal same-process completion path.
+- Fatal persistence loss still fails closed per ADR 0007; do not synthesize reward into a blocked session.
+
+Do not hard-code a fix specifically for `DebugActivityProvider`. The runtime contract must hold for Android, iOS, and future providers.
+
+## Workstream C — make application orchestration headlessly certifiable
+
+The campaign must reduce the current verification blind spot rather than only adding more UNVERIFIED PlayMode tests.
+
+Required outcome:
+
+- The transaction/lifecycle decision logic that determines **what happens after provider completion, domain mutation, commit success/failure, rollback, and provider resolution** must be testable in the standalone .NET gate without a Unity license.
+
+Use the smallest architecture change that achieves this. Reasonable approaches include extracting an engine-free orchestration/coordinator/state-machine class that Unity MonoBehaviours call, or introducing narrow engine-free policies/results for completion and retry decisions. Do not build a fake Unity runtime or a giant abstraction framework.
+
+The extracted/testable surface should own enough logic to prove:
+
+- Expedition start/finish canonical state transitions;
+- commit-success vs revert vs fatal outcomes;
+- provider acknowledgment/rejection ordering;
+- post-rollback repair/convergence;
+- duplicate completion behavior;
+- passive handoff after rejected completion;
+- repeated failures;
+- lifecycle-stored active markers;
+- no-op/duplicate dispositions where relevant.
+
+Keep Unity-specific concerns (coroutine timing, GameObject composition, actual scene APIs) in `App`, but minimize correctness-critical state decisions that exist only inside MonoBehaviour methods.
+
+Update `verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj` and asmdef boundaries only if necessary and deliberately. Do not simply glob all Unity-dependent sources into the net8 project with brittle fake Unity stubs.
+
+## Workstream D — passive ticker late-completion / resolution audit
+
+M8.3 requires every prepared provider delivery to be resolved exactly once after a durability outcome. Audit `ActivityTicker.ReconcileRoutine()` against timeout and lifecycle races.
+
+Current pattern to examine:
+
+- `PreparePassiveDeliveryAsync` is observed from a coroutine;
+- the coroutine has a 12-second timeout;
+- on timeout it exits without a delivery value;
+- the underlying Task is not canceled by that timeout;
+- a provider could theoretically complete later with a prepared delivery whose provider-private claim now has no owner to resolve it.
+
+Android/debug currently complete preparation synchronously and iOS consumes no private claim, but the application contract must not depend accidentally on those implementation details.
 
 Required semantics:
 
-1. A provider may **prepare** a passive snapshot or completed session result, but preparation alone must not make recoverable movement permanently unavailable.
-2. The application processes that delivery against the canonical profile and attempts the required durable commit.
-3. Only after a successful durable outcome may the provider irreversibly acknowledge/drop provider-private pending state associated with that delivery.
-4. If the profile commit is reverted or otherwise rejected, the provider must restore/re-expose the delivery, or reconstruct it safely from its durable cursor/native absolute source, so retry does not lose base movement.
-5. Resolve each prepared delivery exactly once. Repeated acknowledgments/rejections must be idempotent or rejected safely; never duplicate credit.
-6. A process crash before provider acknowledgment must still converge safely after restart from persisted profile cursor + native absolute/history facts. Never require an in-memory receipt to survive process death for correctness.
-7. The contract must work for Android, iOS, and debug implementations without leaking native details into reward/UI code.
-8. Keep asynchronous provider operations non-blocking. Do not introduce `.Result`/`.Wait()` on Unity gameplay paths.
-9. Keep the transaction mechanics IL2CPP-safe and deterministic. Avoid runtime reflection/serialization tricks for critical movement state.
-10. Preserve privacy boundaries: no new raw route/location persistence or sensitive diagnostics.
+- no late completed task may strand a provider claim indefinitely;
+- stale/late results after timeout must be drained/resolved safely or the interface must support cancellation/abandon semantics that make preparation ownership explicit;
+- overlapping/focus-triggered reconciliations cannot resolve the wrong delivery;
+- timeout, cancellation, task fault, host destruction, persistence block, and provider resolution failure leave canonical/provider state convergent;
+- no `.Result`/`.Wait()` blocking on gameplay paths;
+- no background continuation may touch destroyed/replaced Unity state unsafely.
 
-If the cleanest design requires evolving `IActivityProvider`, update all implementations and callers together rather than adding an Android-only side channel.
+Prefer a general lifecycle-safe rule rather than provider-specific exceptions.
 
-## Workstream C — Android passive-counter loss elimination
+## Workstream E — lifecycle autosave vs transactional mutation audit
 
-For the Android cumulative counter path, prove and enforce these invariants:
+`GameHost.Persist()` is intentionally non-transactional and reserved for lifecycle autosave/internal use, while player-visible mutations use `CommitChanges()`. Audit whether lifecycle callbacks can serialize intermediate canonical states that later confuse rollback semantics.
 
-1. Reading the latest raw cumulative counter may advance the **observed baseline**, but pending rewardable movement is not irreversibly discarded until the associated profile transaction commits.
-2. On commit rejection/rollback, the same pending base movement becomes available to retry exactly once in the running process.
-3. After process death, the persisted raw-counter cursor and live absolute sensor value reconstruct the uncommitted delta without double credit.
-4. Reboot/reset and anomaly rebaselining remain fail-closed and never convert rejected movement into a huge or negative reward.
-5. No overlap between a prepared passive delivery and an active Expedition can cause the same raw delta to exist in both ownership domains.
-6. Any provider-private cursor/baseline mutated during preparation is reconciled with the rolled-back profile state after rejection; do not leave a split brain between `_reconciler` and `ActivitySyncState`.
+At minimum prove:
 
-Prefer moving any reusable pending-delivery state machine into engine-free `Activity` code if that materially improves deterministic coverage. Do not move native Android calls into the domain layer.
+- pausing/focus loss while an Expedition is active records only a recoverable state;
+- pausing during start/stop/commit windows cannot create a durable state impossible for boot recovery to interpret;
+- `OnDestroy` cannot persist a transient/failed mutation after a coordinator rollback or fatal transition;
+- persistence-blocked runtime never writes preserved save material;
+- lifecycle autosave and `CommitChanges()` cannot race or interleave in a way that causes stale writes (Unity main-thread sequencing may be sufficient, but prove the assumption in code/tests/docs rather than relying on intuition);
+- post-rollback canonical repair is either intentionally persisted later or remains reconstructible after process death.
 
-## Workstream D — Debug and iOS provider conformance
+Do not replace all lifecycle persistence with broad dirty tracking or save batching unless the audit proves that is necessary. Keep scope on correctness.
 
-### Debug provider
+## Workstream F — deterministic regression suite
 
-Make the debug provider exercise the same semantics as production rather than hiding transaction defects:
+Add tests that fail on the pre-campaign application protocol and prove the repaired orchestration at the lowest engine-free layer possible.
 
-- passive `Read`/prepare must not permanently zero its fake movement before durable acknowledgment;
-- rejected delivery becomes retryable;
-- acknowledged delivery cannot replay;
-- session completion obeys the same resolution rules where applicable.
+Mandatory headless scenarios include:
 
-Add deterministic tests here because the debug provider is engine-free and part of the standalone suite.
+1. persisted active-session marker -> successful Expedition completion -> reward/session closure durable exactly once;
+2. persisted active-session marker -> completion reward save fails -> rollback restores marker -> provider rejects movement -> same-process passive recovery succeeds exactly once after the fix;
+3. scenario 2 with another transient save failure before eventual success; movement remains retryable and never doubles;
+4. duplicate completed session id after durable success is harmless and does not reopen passive ownership;
+5. fatal persistence loss during completion enters blocked semantics and does not fabricate reward or falsely advertise recoverable durability;
+6. stop returns null/fault/cancel after a durable active marker; canonical/provider ownership converges and later passive recovery is safe;
+7. process restart after unresolved/failed completion still converges from durable cursor/native history without duplication;
+8. passive delivery prepared -> commit succeeds -> acknowledge exactly once through the extracted orchestration surface;
+9. passive delivery prepared -> commit reverts -> reject exactly once and retry safely;
+10. suppressed passive delivery during a genuinely live Expedition stays retryable and is not accidentally acknowledged;
+11. late/timeout provider preparation cannot strand an unresolved claim;
+12. host/persistence transition to blocked while activity work is in flight cannot mutate a dead profile or leave provider state falsely acknowledged;
+13. repeated stale/duplicate provider resolutions remain safe no-ops;
+14. durability-gated feedback remains truthful after the new ordering/refactor.
 
-### iOS provider
+Keep/extend existing `MovementDeliveryDurabilityTests`, `InterruptedSessionRecoveryTests`, `SaveIntegrityApplicationTests`, `ActivityServiceTests`, and `PlayerExperienceTests` where appropriate. Add a focused application-orchestration fixture if that gives the clearest ownership.
 
-Preserve the current historical-query safety model:
+Also add/extend PlayMode tests for the real MonoBehaviour wiring when useful, but mark them UNVERIFIED unless a licensed editor actually runs them. The campaign is not complete if the core fix exists only in unexecuted PlayMode coverage.
 
-- failed application commit must leave the durable successful-sync cursor behind so the window is retryable;
-- provider resolution must not accidentally skip a historical interval;
-- duplicate historical query results remain suppressed by durable dedup/cursor state;
-- seven-day query-window behavior remains intact.
+## Workstream G — verification boundary and CI integrity
 
-Do not invent native device evidence. C# planning/contract behavior can be AUTOMATED; Core Motion bridge callbacks remain DEVICE/EDITOR-tier where appropriate.
+Audit the repository’s evidence story after the refactor.
 
-## Workstream E — Expedition completion durability
+Required:
 
-Audit and harden active-session completion under the same transaction model.
+- standalone tests compile the extracted application transaction logic actually used by runtime;
+- Unity-specific `App` classes keep thin, inspectable wiring over that logic;
+- static verification catches accidental loss of the runtime-to-headless linkage where practical;
+- CI continues to run repository identity, agent guards, standalone domain/application tests, Unity static audit, and release hygiene;
+- test counts/status docs are refreshed from real runs;
+- no claim that MonoBehaviour scene composition, Android JNI, iOS callbacks, or device performance was executed unless it actually was.
 
-Required behavior:
+If there is a clean way to add a compile-time guard that prevents the runtime from drifting away from the tested orchestration types, add it. Avoid brittle textual tests that merely grep implementation strings when a type-level/test-level contract is possible.
 
-1. `StopSessionAsync()` / equivalent must not make the session's base movement unrecoverable merely because the subsequent profile save failed.
-2. A same-process retry may replay the exact same stable session identity/result until it is durably resolved; the domain dedup store must still make duplicate delivery harmless.
-3. If the process dies after the native session ends but before the result is durably committed, base movement must remain recoverable from the platform's absolute/history source where the platform supports it. Optional Expedition bonuses may only be claimed when evidence is actually recoverable; never synthesize them.
-4. Rejected completion must not leave `activeSession` suppression stuck forever or cause passive and active paths to both claim the same interval.
-5. Successful completion advances partition/cursor state exactly once.
-6. UI/audio/haptic success remains durability-gated by the existing M8.2 feedback mechanism.
+## Workstream H — cross-cutting whole-repo regression audit after changes
 
-Do not weaken the existing stale-Expedition boot recovery fix.
+After implementing the fix, re-audit the whole repository for effects on:
 
-## Workstream F — explicit activity mutation outcome / no-op write discipline
+- exactly-once passive + Expedition credit;
+- Android claim/restoration state;
+- iOS historical cursor behavior;
+- debug-provider parity;
+- permission denial/unavailable paths;
+- stale interrupted-session boot recovery;
+- persistence rollback/reference preservation;
+- lifecycle autosave and shutdown;
+- milestone rewards and `DurableCommitResolved` feedback gating;
+- HUD/Expedition status copy;
+- AppFlow/UiComposer subscriptions and recomposition after blocked/recovered state;
+- save schema/validator/migrations if any state shape changed;
+- assembly boundaries and Unity platform guards;
+- CI/static scripts;
+- privacy/release logging.
 
-Remove the documented no-op activity commit without introducing broad dirty tracking.
-
-`ActivityTicker` must be able to distinguish at least:
-
-- no provider delivery;
-- delivery suppressed with no canonical change;
-- duplicate delivery already proven durable, no new canonical change;
-- cursor/dedup-only canonical change requiring persistence;
-- reward/progression mutation requiring persistence;
-- provider delivery that may be acknowledged without another profile save because durable state already proves it consumed.
-
-Prefer a structured domain result (for example `StateChanged`, accepted steps, and delivery disposition) over inferring state change from `acceptedSteps == 0`.
-
-Required result:
-
-- do not call `CommitChanges()` on the 30-second activity cadence when the profile graph did not change;
-- never skip a commit when cursor, dedup, reward, milestone, or any other durable field did change;
-- provider acknowledgment must remain correct in both cases.
-
-Do not expand this into whole-game dirty tracking, save batching, or speculative performance optimization.
-
-## Workstream G — deterministic regression suite
-
-Add tests that fail on the pre-campaign behavior and prove the new contract at the lowest engine-free layer possible.
-
-Mandatory scenarios include:
-
-1. passive movement prepared -> profile commit succeeds -> provider acknowledges -> movement credits exactly once;
-2. passive movement prepared -> profile commit fails/reverts -> provider rejects/restores -> retry succeeds -> the original movement credits exactly once total;
-3. repeated resolve/ack/reject calls cannot create duplicate credit or negative pending state;
-4. process-restart reconstruction from old persisted cursor + newer absolute Android counter recovers an uncommitted window once;
-5. Android reboot/reset after a rejected prepared delivery does not create a huge/negative/double reward;
-6. overlapping reads / in-flight protection cannot prepare two claims over one pending window;
-7. debug provider failed commit does not lose the fake passive counter;
-8. duplicate passive interval whose durable state already contains the dedup/cursor performs no needless profile write and does not replay provider movement;
-9. null/no-movement read performs no profile write;
-10. cursor-only/dedup-only mutation still persists when required;
-11. Expedition result commit failure remains retryable or otherwise recovers the same base movement without duplicate credit;
-12. duplicate Expedition result/session ID remains harmless after retry/restart;
-13. stale interrupted Expedition recovery still restores passive earning exactly once;
-14. iOS historical planning/retry/dedup behavior stays unchanged.
-
-Extend existing `ActivityServiceTests`, `AndroidCounterReconciliationTests`, `InterruptedSessionRecoveryTests`, `IosHistoryPlanningTests`, and save-integrity tests where that is the clearest home. Add a focused new test fixture if necessary.
-
-For Unity-only `ActivityTicker` integration behavior, add PlayMode coverage if useful, but keep evidence marked UNVERIFIED unless a licensed editor actually runs it.
-
-## Workstream H — cross-cutting regression audit after the contract changes
-
-Because provider semantics are cross-cutting, re-audit the whole repository after implementation for effects on:
-
-- permission request/denial/unavailable behavior;
-- passive polls on focus/resume and cadence;
-- timeouts, task faults, cancellation, and in-flight guards;
-- exactly-once dedup across passive + Expeditions + save/restart;
-- milestone awards and durable feedback queue behavior;
-- M8.1 profile rollback/reference preservation;
-- persistence blocked/recovery mode;
-- lifecycle autosave;
-- debug tools;
-- Android/iOS platform assembly guards;
-- serializer/validator/migrations if provider transaction metadata becomes durable;
-- documentation claims vs actual evidence;
-- release privacy/logging hygiene.
-
-Fix introduced/exposed Critical and High regressions before completion. Fix Medium correctness/state-integrity regressions that are necessary to make the campaign safe. Record genuinely blocked hardware/editor concerns honestly rather than inventing workarounds.
+Fix introduced/exposed Critical and High regressions before completion. Fix Medium correctness/state-integrity issues needed for a coherent protocol. Record lower-risk or hardware-only items honestly.
 
 ## Documentation / architecture requirements
 
-This changes the platform/application transaction boundary, so document it.
+This campaign changes or clarifies the application transaction/lifecycle boundary, so documentation must match reality.
 
 At minimum:
 
-1. Add a new ADR (expected next number: **ADR 0009**, unless the repository advanced) describing the movement-delivery acknowledgment/rejection contract, crash semantics, provider responsibilities, and tradeoffs.
-2. Update `docs/TECHNICAL_ARCHITECTURE.md` activity pipeline / transaction sections.
-3. Update `docs/ACTIVITY_REWARD_SYSTEM.md` exactly-once/no-loss semantics.
-4. Update `docs/MOBILE_ACTIVITY_INTEGRATION.md` Android/iOS provider delivery lifecycle.
-5. Update `docs/IMPLEMENTATION_STATUS.md` with exact new evidence and resolved/deferred follow-ups.
-6. Update `docs/DATA_MODEL.md` only if durable schema/state actually changes; if it does, follow the migration rules exactly.
-7. Correct any stale contradictory documentation found by the whole-repo audit.
-
-Do not mark physical-device or Unity-runtime behavior as verified from standalone tests.
+1. Add a new ADR (expected next number: **ADR 0010**, unless the repo advanced) describing the runtime orchestration contract, Expedition completion/rollback sequencing, lifecycle marker semantics, provider resolution ownership, and headless-certification boundary.
+2. Update `docs/TECHNICAL_ARCHITECTURE.md` application/activity/persistence sections.
+3. Update `docs/ACTIVITY_REWARD_SYSTEM.md` for failed Expedition completion and passive recovery semantics.
+4. Update `docs/MOBILE_ACTIVITY_INTEGRATION.md` if provider resolution/cancellation/late-completion responsibilities change.
+5. Update `docs/TESTING_AND_PERFORMANCE.md` to document what is now headlessly certified vs still PlayMode/device-only.
+6. Update `docs/IMPLEMENTATION_STATUS.md` with exact evidence, root causes, resolved findings, and remaining UNVERIFIED tiers.
+7. Update `docs/DATA_MODEL.md` only if the durable schema actually changes; if it does, follow migration rules exactly.
+8. Correct any stale contradictory documentation found by the whole-repository audit.
 
 ## Validation gates
 
@@ -282,10 +308,11 @@ Run every genuinely available gate and record exact results from this campaign:
 4. `scripts/verify-unity-static.ps1`
 5. `pwsh scripts/Test-AgentGuards.ps1`
 6. repository identity guard against the live checkout
-7. `git diff --check`
-8. targeted activity/save tests repeatedly where useful to expose flaky transaction behavior
-9. Unity EditMode/PlayMode only if the pinned editor has a real valid license; otherwise UNVERIFIED with the reproducible commands recorded
-10. Android/iOS device/runtime checks only if the required build modules/hardware actually exist; otherwise UNVERIFIED
+7. targeted new orchestration tests repeatedly where useful
+8. all activity/persistence/interruption suites impacted by this campaign
+9. `git diff --check`
+10. Unity EditMode/PlayMode only if the pinned editor has a real valid license; otherwise UNVERIFIED with reproducible commands recorded
+11. Android/iOS device/runtime checks only if the required modules/hardware exist; otherwise UNVERIFIED
 
 Before integration/push, fetch and run the remote-advance guard. If `origin/main` advanced unexpectedly, STOP automatic integration and reconcile deliberately. Never force-push.
 
@@ -293,46 +320,51 @@ Before integration/push, fetch and run the remote-advance guard. If `origin/main
 
 The campaign is complete only when all of the following are true:
 
-1. No Android/debug passive delivery is irreversibly consumed before its durability outcome is resolved.
-2. A transient save failure followed by retry does not permanently lose already-observed base movement and does not double-credit it.
-3. Android provider-private reconciler state and profile-backed cursor state cannot remain divergent after a rejected commit.
-4. Process restart after an unresolved delivery converges from durable cursor + native absolute/history facts without duplication.
-5. Expedition completion has an explicit failure/retry/recovery story; a failed save cannot silently eat its base movement while the UI claims success.
-6. Passive + active ownership partition remains exactly-once across all tested failure paths.
-7. iOS historical retries remain safe under the common provider contract.
-8. `ActivityTicker` does not persist when the profile graph truly did not change, while every cursor/dedup/reward mutation still persists.
-9. Debug provider mirrors the transactional semantics closely enough to catch regressions in the standalone suite.
-10. All newly discovered Critical/High regressions in the affected whole-repo audit are fixed with regression coverage.
-11. Documentation matches the implemented contract and evidence tier exactly.
-12. All available gates pass; blocked editor/device tiers remain explicitly UNVERIFIED.
-13. Final tree is clean, remote advancement has been reconciled safely, and changes are committed/pushed without force.
+1. The persisted-active-marker + failed Expedition completion scenario is reproduced by an automated regression test and fixed.
+2. A failed completion commit cannot resurrect a stale `activeSession` that permanently suppresses provider-rejected movement in the same process.
+3. Repeated transient persistence failures still preserve exactly-once movement recovery without loss or duplication.
+4. Android/debug rejected session movement remains retryable; iOS historical recovery remains safe.
+5. Provider completion is acknowledged only after durable proof; failed/reverted completion never receives a false durable acknowledgment.
+6. Passive prepared deliveries cannot be stranded by timeout/late completion/lifecycle races under the final contract.
+7. Fatal persistence loss still fails closed and does not synthesize or falsely present progress.
+8. Correctness-critical application transaction decisions are executed by the standalone headless suite, not only by UNVERIFIED PlayMode tests.
+9. Unity MonoBehaviours are thin wiring over the tested transaction policy/coordinator where practical; no duplicate hidden copy of the state machine remains in presentation code.
+10. Existing M8.1/M8.2/M8.3 invariants and regressions remain green.
+11. No newly discovered Critical/High orchestration/state-integrity defect remains unresolved.
+12. Documentation and evidence tiers match the implementation exactly.
+13. All available gates pass; blocked editor/device tiers remain explicitly UNVERIFIED.
+14. Final tree is clean, remote advancement has been reconciled safely, and changes are committed/pushed without force.
 
 ## Constraints / non-goals
 
-- Do not build Region 2, cloud save, multiplayer, combat, live ops, Health Connect, HealthKit expansion, or other Phase 9 work.
+- Do not build Region 2, cloud save, multiplayer, combat, live ops, Health Connect, expanded HealthKit import, analytics backend, or other Phase 9 work.
 - Do not require GPS for passive step earning.
-- Do not trade exactly-once safety for "never lose a step". When evidence is ambiguous, fail closed rather than minting duplicate currency.
-- Do not fabricate optional Expedition bonus evidence after a process crash.
-- Do not add a backend to solve this local transaction problem.
-- Do not make platform-native code compute game rewards.
-- Do not add global dirty tracking or broad save batching in this campaign.
+- Do not weaken exactly-once movement safety to make recovery easier.
+- Do not synthesize optional Expedition bonus evidence after failure/crash.
+- Do not bypass ADR 0007 fail-closed persistence behavior.
+- Do not solve this by disabling lifecycle autosave or removing persisted interruption recovery without an equivalent proven replacement.
+- Do not solve it with provider-specific hacks that leave the common application protocol ambiguous.
+- Do not add a giant dependency-injection framework or fake Unity runtime merely for tests.
+- Do not rely exclusively on text-grep tests for transaction ordering when executable state-machine tests are possible.
+- Do not add broad dirty tracking/save batching unless proven necessary for correctness.
 - Do not bypass Unity licensing, UAC/elevation, signing, or hardware requirements.
-- Do not suppress failing tests or weaken existing persistence/identity guards.
-- Do not force-push, delete remote refs, or overwrite concurrent work.
+- Do not suppress failing tests or weaken repository identity/concurrency guards.
+- Do not force-push, delete remote refs, overwrite concurrent work, or mutate the sibling repository.
 
 ## Completion / reporting requirements
 
 At the end:
 
-1. Re-run all available validation gates after the final code/doc changes.
-2. Inspect the complete diff, not only the last files touched.
-3. Update `docs/IMPLEMENTATION_STATUS.md` with exact test counts/results, systems changed, resolved follow-ups, UNVERIFIED tiers, and any deliberate remaining limitation.
+1. Re-run all available validation gates after final code/doc changes.
+2. Inspect the complete diff and the whole affected transaction graph, not only the last files touched.
+3. Update `docs/IMPLEMENTATION_STATUS.md` with exact new test counts/results, systems changed, resolved defects, remaining limitations, and UNVERIFIED tiers.
 4. Flip this prompt to `**Status:** COMPLETE` and append an executor report containing:
    - start SHA and final SHA;
-   - root cause(s);
-   - final transaction design;
-   - provider-by-provider behavior (Android/iOS/debug);
-   - passive and Expedition failure semantics;
+   - exact root cause(s), including whether the planner’s persisted-marker rollback bug reproduced as predicted;
+   - final application orchestration design;
+   - Expedition success/failure/retry/crash semantics;
+   - passive timeout/late-completion semantics;
+   - how the headless verification boundary changed;
    - tests added/changed;
    - exact validation results;
    - editor/device UNVERIFIED evidence;
@@ -340,19 +372,4 @@ At the end:
 5. Use detailed commit messages; the final commit message should double as the session report.
 6. Fetch, run the remote-advance guard, integrate safely to `main`, push without force, and release the writer lease on normal completion.
 
-Do not stop after making the happy path pass. The point of M8.3 is to prove the failure/retry/crash semantics across the complete movement delivery pipeline.
-
----
-
-## Executor Report (M8.3, completed 2026-08-25)
-
-- **Start SHA / final SHA:** `8d1f9c7250c0ac72b59dc3b8958ffeef94bf6a5d` → see final commit on `agent/walk-game/m8.3-fc6b02fe` (planned-from `15384b6b`; the two planner-only commits in between touched only this file and were reconciled).
-- **Root causes:** (1) providers irreversibly consumed movement (`DrainPending`, debug counter zeroing, session partitioning) before `CommitChanges()` resolved, so a failed save permanently dropped the window while never doubling it; (2) `ProcessPassiveSnapshot` returned an ambiguous step count so callers could neither skip no-op cadence saves nor resolve deliveries correctly; (3) audit additionally found a latent debug-provider double credit: simulated session steps stayed in the passive counter after a durably credited session and were paid again by the next passive tick.
-- **Final transaction design:** ADR 0009 prepared-delivery contract — `PreparePassiveDeliveryAsync` stages without consuming; application processes against canonical profile and attempts the commit; `ResolvePreparedDelivery`/`ResolveSessionCompletion` acknowledge exactly once after durable proof or reject to restore retryable pending state; idempotent for stale/repeated/unknown resolutions; crash recovery always derives from persisted cursors + native absolute/history facts, never from in-memory receipts.
-- **Provider behavior:** Android — engine-free claim state machine (`ClaimPending/AcknowledgeClaim/RestoreClaim`), single open claim blocks overlapping claims, rejection keeps restored pending through reboot/anomaly rebaseline, runtime-baseline-ahead-of-cursor proven safe in-process and across restart; Expedition base steps held as completion claim, rejected saves return them to passive. iOS — no-op resolutions; failed commit rewinds the durable sync cursor with the rollback so the identical history window retries; dedup stays durable-authoritative. Debug — full transactional mirror in the standalone suite, plus the session/passive double-credit fix above.
-- **Passive failure semantics:** suppressed deliveries are rejected back (movement held, not lost); proven duplicates acknowledge with zero profile writes; cursor/dedup-only repairs still persist; null/no-movement reads never save.
-- **Expedition failure semantics:** same-process result replay retries until durably marked (rollback frees the session-id mark), or provider returns base steps to the passive stream; UI remains durability-gated/truthful; stale-marker boot recovery untouched.
-- **Tests added/changed:** new `MovementDeliveryDurabilityTests` (14 scenarios including fault-injected real rollback→reject→retry exactly-once for both passive and Expedition paths); `AndroidCounterReconciliationTests` +6 claim scenarios; disposition/idempotency assertions threaded through `ActivityServiceTests`, `InterruptedSessionRecoveryTests`, `PermissionFlowTests`, `PlayerExperienceTests`.
-- **Validation results:** domain suite **165/165 PASS** (baseline 146/146) via `dotnet test` + `verify-domain.ps1`; `verify-release-hygiene.ps1` PASS (61 sources); `verify-unity-static.ps1` PASS (100 assets/100 metas); `Test-AgentGuards.ps1` **36/36 PASS** (first run's 12 sh-matrix failures were environmental WSL-vs-Git-Bash PATH shadowing, reproduced clean with Git Bash first on PATH); identity guard exit 0 pre/post; `git diff --check` clean.
-- **UNVERIFIED tiers:** Unity EditMode/PlayMode (account-level licensing blocker unchanged; repro commands recorded in IMPLEMENTATION_STATUS.md); Android/iOS device tiers (no build modules/hardware). No native device evidence invented.
-- **Deferred follow-ups:** none new; M8.2 follow-ups 3 and 4 are resolved by this campaign (struck through in IMPLEMENTATION_STATUS.md).
+Do not stop after patching the single visible failure path. The point of M8.4 is to make the **real application transaction protocol** as rigorous and executable as the M8.3 domain/provider contract, so a green headless suite actually means the movement durability sequence used by the game is safe.
