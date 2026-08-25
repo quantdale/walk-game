@@ -1,0 +1,8 @@
+#!/bin/sh
+# pre-commit: repository identity must be proven exactly before any commit is
+# recorded in quantdale/walk-game. Fails closed on mismatch.
+root=$(git rev-parse --show-toplevel 2>/dev/null) || {
+    echo "pre-commit: not inside a git work tree" >&2
+    exit 1
+}
+exec sh "$root/scripts/assert-repo-identity.sh" "$@"

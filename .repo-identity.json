@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "repository": "quantdale/walk-game",
+  "project": "Walk Game",
+  "notes": "Machine-readable repository identity consumed by scripts/Assert-RepoIdentity.ps1, scripts/assert-repo-identity.sh, .githooks/*, and CI. This project is NOT quantdale/simple-walk-game; see AGENTS.md REPOSITORY IDENTITY section."
+}

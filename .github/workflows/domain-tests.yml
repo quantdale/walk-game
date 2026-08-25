@@ -7,9 +7,40 @@ on:
     branches: [main]
 
 jobs:
+  repository-identity:
+    name: Repository identity (fail closed)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Belt beyond the guard script itself: this workflow must never act on a
+      # different repository (e.g. a fork named simple-walk-game).
+      - name: Enforce GITHUB_REPOSITORY
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REPOSITORY -ne 'quantdale/walk-game') {
+            Write-Host "GITHUB_REPOSITORY '$env:GITHUB_REPOSITORY' != 'quantdale/walk-game'" -ForegroundColor Red
+            exit 1
+          }
+
+      - name: Assert repository identity
+        shell: pwsh
+        run: ./scripts/Assert-RepoIdentity.ps1 -CiMode
+
+  agent-guards:
+    name: Agent guard suites (identity / writer lock / race)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run deterministic guard tests (pwsh + sh implementations)
+        shell: pwsh
+        run: ./scripts/Test-AgentGuards.ps1
+
   verify-domain:
     name: Standalone domain suite (.NET)
     runs-on: ubuntu-latest
+    needs: [repository-identity]
     steps:
       - uses: actions/checkout@v4
 

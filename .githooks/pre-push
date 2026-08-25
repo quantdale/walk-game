@@ -1,0 +1,55 @@
+#!/bin/sh
+# pre-push for quantdale/walk-game:
+#   1. repository identity guard (fail closed);
+#   2. remote-ref deletion is refused outright;
+#   3. lost-update race check — fetch each pushed branch and refuse when origin
+#      contains commits unreachable from the local tip (would need --force).
+# A push that cannot be proven safe is refused; reconciliation is deliberate.
+set -u
+
+ZERO=0000000000000000000000000000000000000000
+
+root=$(git rev-parse --show-toplevel 2>/dev/null) || {
+    echo "pre-push: not inside a git work tree" >&2
+    exit 1
+}
+
+sh "$root/scripts/assert-repo-identity.sh" || exit 1
+
+while read -r local_ref local_oid remote_ref _remote_oid; do
+    [ -n "${remote_ref:-}" ] || continue
+
+    if [ "$local_oid" = "$ZERO" ]; then
+        echo "PRE-PUSH GUARD: refusing deletion of $remote_ref." >&2
+        echo "Automated sessions must never delete remote branches; a human must perform this explicitly." >&2
+        exit 1
+    fi
+
+    case "$remote_ref" in
+        refs/heads/*) ;;
+        *) continue ;;
+    esac
+
+    if ! git fetch --quiet origin "$remote_ref" 2>/dev/null; then
+        # The push itself needs the network, so an unverifiable state here is a stop condition.
+        echo "PRE-PUSH GUARD: could not fetch $remote_ref from origin to prove the race state; refusing push." >&2
+        exit 1
+    fi
+
+    remote_now=$(git rev-parse -q --verify FETCH_HEAD 2>/dev/null)
+    if [ -n "$remote_now" ] && [ "$remote_now" != "$ZERO" ]; then
+        if git merge-base --is-ancestor "$remote_now" "$local_oid" 2>/dev/null; then
+            :
+        else
+            echo "PRE-PUSH GUARD: origin/$remote_ref advanced during this session with commits not in your push. Pushing would require force." >&2
+            git log --oneline --decorate "$local_oid..$remote_now" >&2 || true
+            echo "" >&2
+            echo "STOP. Do not use --force or rewrite the competing work away." >&2
+            echo "Fetch, inspect and reconcile deliberately (see AGENTS.md 'Remote advancement / lost-update protection')," >&2
+            echo "rerun impacted verification, then push again." >&2
+            exit 1
+        fi
+    fi
+done
+
+exit 0
