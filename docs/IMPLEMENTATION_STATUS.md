@@ -12,11 +12,11 @@ Evidence tiers:
 - **DEVICE** — requires physical/emulated mobile hardware.
 - **UNVERIFIED** — claimed by no evidence yet.
 
-Last updated: 2026-08-25 (M8.1 save-integrity & persistence-failure containment campaign)
+Last updated: 2026-08-25 (M8.2 repository-isolation, concurrency-guard & whole-repo audit campaign)
 
 ## Verification status
 
-- Domain test suite: **144/144 passing (AUTOMATED)** via
+- Domain test suite: **146/146 passing (AUTOMATED)** via
   `dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj`
   (`scripts/verify-domain.ps1`; also runs in CI on every push/PR to `main`).
 - CI domain gate: configured (`.github/workflows/domain-tests.yml`) now including the
@@ -38,9 +38,10 @@ Last updated: 2026-08-25 (M8.1 save-integrity & persistence-failure containment 
   Android build/install/launch and native lifecycle evidence remain **UNVERIFIED**;
   `scripts/verify-android-smoke.ps1` is committed and ready for the first emulator/device.
   iOS Xcode generation/build remains **UNVERIFIED** (no macOS/Xcode).
-- Static bring-up audit of assemblies/GUIDs/scenes/packages: **AUTOMATED**; 94 asset files
-  and 94 `.meta` files pass the audit with zero missing real GUID references. The only unresolved
-  scene GUID is Unity's built-in zero GUID for the authored light.
+- Static bring-up audit of assemblies/GUIDs/scenes/packages: **AUTOMATED**; 99 asset files
+  and 99 `.meta` files pass the audit with zero missing real GUID references. The only unresolved
+  scene GUID is Unity's built-in zero GUID for the authored light. (Counts refreshed by the
+  M8.2 campaign; the pre-M8.1 record cited 94/94.)
 
 ## Phase 0 - Foundation
 
@@ -243,8 +244,8 @@ Defects discovered by first-import/runtime inspection and fixed this campaign:
 | Gate | Result | Evidence |
 | --- | --- | --- |
 | Domain suite | PASS | 144/144 (`dotnet test`, this campaign) |
-| Unity static audit | PASS | 94 assets/94 metas, pin + manifest invariants (`verify-unity-static.ps1`) |
-| Release hygiene / privacy audit | PASS | 57 runtime sources, minimal manifest (`verify-release-hygiene.ps1`) |
+| Unity static audit | PASS | 99 assets/99 metas, pin + manifest invariants (`verify-unity-static.ps1`) |
+| Release hygiene / privacy audit | PASS | 61 runtime sources, minimal manifest (`verify-release-hygiene.ps1`) |
 | `git diff --check` | PASS | clean output at final gate run |
 | Unity project import | UNVERIFIED | requires licensed editor |
 | Unity compilation | UNVERIFIED | requires licensed editor |
@@ -253,7 +254,7 @@ Defects discovered by first-import/runtime inspection and fixed this campaign:
 | Ashfall complete playthrough | PASS | `AshfallTests.DeadWorld_To_TransitGateAlignment_CompletesInDependencyOrder` |
 | Economy pacing replay | PASS | `AshfallEconomyPacingTests` (casual-walker window; idle-only completes nothing) |
 | Exactly-once activity | PASS | `ActivityServiceTests` + `InterruptedSessionRecoveryTests` (incl. save/reload) |
-| Save fault injection | PASS | `SaveLoadTests` (+ producer-prune regression, + M8.1 trusted-rotation matrix) |
+| Save fault injection | PASS | `SaveLoadTests` (M8.1 trusted-rotation matrix); producer-prune regression lives in `PlayerExperienceTests.EnsureProducerStates_PrunesUnknownPersistedProducerIds` |
 | Save-health boot policy & rollback containment (M8.1) | PASS | `SaveIntegrityApplicationTests` (policy mapping, coordinator outcomes, copier graph fidelity) |
 | Blocked-boot lifecycle & start-over quarantine (M8.1) | UNVERIFIED | PlayMode gates committed in `RuntimeCertificationTests`; requires licensed editor |
 | Android build | UNVERIFIED | AndroidPlayer module absent; build script release-shaped and ready |
@@ -261,3 +262,74 @@ Defects discovered by first-import/runtime inspection and fixed this campaign:
 | Real step sensor | UNVERIFIED | physical device required |
 | iOS compile/device | UNVERIFIED | no macOS/Xcode |
 | Performance measurement | UNVERIFIED | structural measures only; profiling needs hardware |
+
+## M8.2 campaign — repository isolation, concurrency guards & whole-repo audit
+
+**Scope:** repair + repository isolation. Identity proof (`quantdale/walk-game`,
+never the sibling `quantdale/simple-walk-game`), single-writer enforcement,
+lost-update protection, hook/CI enforcement, a four-track whole-repository
+breakage audit (persistence/M8.1 call-site trace; Unity asset/GUID integrity;
+docs-claims-vs-tests; exactly-once/lifecycle sweep), and repairs for every
+Critical/High plus state-integrity Medium finding.
+
+### New enforcement infrastructure (AUTOMATED)
+
+| Guard | Evidence |
+| --- | --- |
+| Repository identity guard | `.repo-identity.json` + `scripts/Assert-RepoIdentity.ps1` + `scripts/assert-repo-identity.sh`; validates root, identity file, normalized HTTPS/SSH origin, fingerprints, `GITHUB_REPOSITORY` under CI |
+| Single-writer lease | `scripts/WriterLock.ps1` / `writer-lock.sh`; atomic untracked lock under `.git/`; stale recovery only via explicit `--force` with recorded provenance |
+| Lost-update protection | `scripts/Check-RemoteAdvance.ps1` / `check-remote-advance.sh`; fetch + ancestry proof before integration |
+| Tracked hooks | `.githooks/pre-commit`, `.githooks/pre-push` (identity guard; refuses remote deletion and force-shaped pushes); activation via `git config core.hooksPath .githooks` (`scripts/setup-hooks.*`) |
+| CI gates | `repository-identity` job (hard `GITHUB_REPOSITORY` equality + `-CiMode` guard) and `agent-guards` job in `.github/workflows/domain-tests.yml` |
+| Deterministic guard suites | `pwsh scripts/Test-AgentGuards.ps1` → **36/36 PASS** (twelve scenarios × pwsh/sh implementations + hook stdin tests), entirely against local fixture repos with `GIT_ALLOW_PROTOCOL=file` egress restriction |
+| Policy docs | AGENTS.md identity contract first section + isolation/writer-lock/race/destructive-ops/recovery sections; ADR 0008; all harness goal adapters route through the identity guard |
+
+### Whole-repo audit results and repairs (AUTOMATED unless noted)
+
+| Finding | Severity | Disposition |
+| --- | --- | --- |
+| Lore discovery presented success text + fired celebration cue even when its commit rolled back | **High** | Fixed: `AppFlowController.Interact` now checks the commit outcome and shows truthful "could not be saved" copy; `GameHost.DurableCommitResolved` + deferred-cue queue in `FeedbackController` flush success cues only on durable commits |
+| Restoration/milestone/expedition/placement cues fired before durability was known | Medium | Fixed by the same deferred-cue mechanism; placement confirm cue now outcome-gated; expedition finish cue queued |
+| Onboarding getter mutated canonical `settings.onboardingStep` outside any persistence boundary on every HUD refresh | Medium | Fixed: derivation made pure; persisted advancement only via explicit advance/dismiss through `CommitChanges`, never regressing behind world facts |
+| Debug region reset mutated durable state without persistence containment | Low (debug-only) | Fixed: routed through `CommitChanges` |
+| `AchievementState.reachedMilestoneIds` could deserialize null → NRE on next milestone award and during rollback copies | Medium | Fixed in `SaveValidator` + regression test |
+| Negative `lifetimeVerifiedDistanceMeters` passed validation into bonus math | Medium | Fixed: clamped with warning + regression test |
+| Malformed/null producer entries and negative/future producer checkpoints passed validation | Medium | Fixed: prune + clamp mirroring building rules + regression test |
+| Dead destructive `FileSaveRepository.DeleteAll` API (zero callers) invited bypassing quarantine semantics | Low | Removed from interface+implementation; ADR 0007 amended |
+| `TECHNICAL_ARCHITECTURE.md §14` mandated save fields (`appVersion`, timestamps) absent from schema v1 | High (doc/code contradiction) | Contract doc corrected to match DATA_MODEL and implementation |
+| Stale audit counts in this document (94/94 metas, 57 sources) presented as current evidence | Medium | Refreshed (99/99, 61); test-attribution pointer fixed |
+| URP/input settings exist only after first licensed setup run; unused Unity modules pinned (incl. `unityanalytics`) | Medium | Deferred with rationale: unverifiable without an editor session; recorded as follow-up below |
+| Failed-commit rollback permanently drops (never doubles) the already-drained Android sensor window | Low | Deferred: direction-safe under exactly-once priority; documented follow-up |
+
+Unity asset graph verified clean beyond the static script: 198 Assets files,
+bidirectional meta pairing, zero orphaned metas, 99 GUIDs collision-free, both
+scene script references resolve with matching MonoBehaviour classes,
+EditorBuildSettings GUIDs consistent. Exactly-once activity pipeline, Builder/
+Explore canonical-state projection, injected-clock discipline, startup failure
+paths, dedup rollback repair, and the standalone-harness source selection were
+audited clean.
+
+### M8.2 certification matrix
+
+| Gate | Result | Evidence |
+| --- | --- | --- |
+| Domain suite | PASS | 146/146 (`dotnet test` / `verify-domain.ps1`, this campaign) |
+| Unity static audit | PASS | 99 assets/99 metas (`verify-unity-static.ps1`) |
+| Release hygiene / privacy audit | PASS | 61 runtime sources (`verify-release-hygiene.ps1`) |
+| Agent guard suites | PASS | 36/36 scenarios (`Test-AgentGuards.ps1`, pwsh + sh matrices) |
+| `git diff --check` | PASS | clean at final gate run |
+| Cross-repo contamination grep | PASS | sibling references only inside protection mechanism |
+| Repository identity (live) | PASS | `assert-repo-identity.sh` exit 0 against real checkout |
+| Unity EditMode/PlayMode | UNVERIFIED | licensed editor session still blocked by account-level licensing |
+| Android/iOS device tiers | UNVERIFIED | unchanged environment blockers |
+
+### Deferred follow-ups (deliberate, documented)
+
+1. Commit generated URP/Graphics/Input settings after first licensed editor run;
+   then add a static check asserting them.
+2. Trim unused pinned Unity modules (privacy posture + IL2CPP size) once an
+   editor build can validate the manifest change.
+3. Consider re-paying drained-but-uncommitted Android step windows after failed
+   commits without violating exactly-once.
+4. `ActivityTicker` issues a no-op commit when passive processing produced no
+   mutation (harmless write every cadence).
