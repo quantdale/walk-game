@@ -12,11 +12,11 @@ Evidence tiers:
 - **DEVICE** — requires physical/emulated mobile hardware.
 - **UNVERIFIED** — claimed by no evidence yet.
 
-Last updated: 2026-08-25 (M8.2 repository-isolation, concurrency-guard & whole-repo audit campaign)
+Last updated: 2026-08-25 (M8.3 movement-delivery durability & activity write discipline campaign)
 
 ## Verification status
 
-- Domain test suite: **146/146 passing (AUTOMATED)** via
+- Domain test suite: **165/165 passing (AUTOMATED)** via
   `dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj`
   (`scripts/verify-domain.ps1`; also runs in CI on every push/PR to `main`).
 - CI domain gate: configured (`.github/workflows/domain-tests.yml`) now including the
@@ -329,7 +329,58 @@ audited clean.
    then add a static check asserting them.
 2. Trim unused pinned Unity modules (privacy posture + IL2CPP size) once an
    editor build can validate the manifest change.
-3. Consider re-paying drained-but-uncommitted Android step windows after failed
-   commits without violating exactly-once.
-4. `ActivityTicker` issues a no-op commit when passive processing produced no
-   mutation (harmless write every cadence).
+3. ~~Consider re-paying drained-but-uncommitted Android step windows after failed
+   commits without violating exactly-once~~ — **RESOLVED by M8.3** (ADR 0009:
+   prepared-delivery claims restore rejected movement for exactly-one retry).
+4. ~~`ActivityTicker` issues a no-op commit when passive processing produced no
+   mutation (harmless write every cadence)~~ — **RESOLVED by M8.3** (explicit
+   `PassiveReconciliationResult`; commits only on durable mutation).
+
+## M8.3 campaign — movement delivery durability & activity write discipline
+
+**Scope:** the provider-side half of the activity transaction left deferred by
+M8.2 (follow-ups 3 and 4 above). Android and debug providers consumed/drained
+movement before `CommitChanges()` proved durability; a failed save rolled the
+profile back while provider-private state stayed advanced, permanently losing
+the window (drop-never-double). Expedition completion had the same defect
+class, and the ticker committed on every cadence pass regardless of whether
+anything canonical changed.
+
+Start SHA `8d1f9c7250c0ac72b59dc3b8958ffeef94bf6a5d` (planner handoff at
+`main@15384b6b` + planner-only advance reconciled), branch
+`agent/walk-game/m8.3-fc6b02fe`, single-writer lease held for the session.
+
+### Contract (ADR 0009) — AUTOMATED
+
+| Change | Evidence |
+| --- | --- |
+| `IActivityProvider` two-phase delivery | `PreparePassiveDeliveryAsync` / `ResolvePreparedDelivery` / `ResolveSessionCompletion` replace `ReadSnapshotAsync`; all implementations and callers migrated together |
+| Explicit mutation outcome | `ActivityService.ProcessPassiveSnapshot` returns `PassiveReconciliationResult` (`NoDelivery`, `SuppressedBySession`, `DuplicateDurable`, `DurableMutation`) instead of ambiguous accepted-steps count |
+| Android claim state machine (engine-free) | `AndroidCounterReconciler.ClaimPending/AcknowledgeClaim/RestoreClaim`: single open claim, idempotent resolution, restored pending survives reboot/anomaly rebaseline; runtime baseline intentionally ahead of rolled-back cursor is proven safe both in-process and across restart |
+| Debug provider mirrors production | staging instead of zeroing; reject restores the fake counter; **latent double-credit fixed**: simulated session steps previously stayed in the passive counter after a durably credited session |
+| iOS conformance | preparation consumes nothing private; resolutions are no-ops; failed commit rewinds durable cursor so the identical history window retries |
+| Expedition completion durability | providers hold base steps between stop and resolution; rejected saves return them to the passive stream; same-process result replay retries until durably marked; UI copy stays truthful (M8.2 mechanism untouched) |
+| Ticker write discipline | 30s cadence commits only on `DurableMutation`; suppressed deliveries are rejected back to the provider; proven duplicates acknowledge without any profile write; legacy unconditional `providerCursor = null` write removed |
+| Regression coverage | new `MovementDeliveryDurabilityTests` (14 scenarios incl. fault-injected real rollback/retry), extended `AndroidCounterReconciliationTests` (+6 claim scenarios), disposition assertions in `ActivityServiceTests`/`InterruptedSessionRecoveryTests`/`PlayerExperienceTests` |
+
+### M8.3 certification matrix
+
+| Gate | Result | Evidence |
+| --- | --- | --- |
+| Domain suite | PASS | **165/165** (`dotnet test` + `verify-domain.ps1`, this campaign; baseline was 146/146) |
+| Unity static audit | PASS | 100 assets/100 metas (`verify-unity-static.ps1`, after adding the new fixture meta) |
+| Release hygiene / privacy audit | PASS | 61 runtime sources (`verify-release-hygiene.ps1`) |
+| Agent guard suites | PASS | 36/36 (`Test-AgentGuards.ps1`; requires Git Bash ahead of WSL `bash.exe` on PATH — first run's 12 sh-matrix failures were environmental path shadowing, not product regressions) |
+| Repository identity (live) | PASS | `Assert-RepoIdentity.ps1` exit 0 pre-work and post-work |
+| `git diff --check` | PASS | clean at final gate run |
+| Unity EditMode/PlayMode | UNVERIFIED | licensed editor still blocked by account-level licensing (repro: sign in, activate, `scripts/verify-unity-editmode.ps1`) |
+| Android/iOS device tiers | UNVERIFIED | unchanged environment blockers; Android/iOS provider code paths compile under platform guards only |
+
+### Deliberate remaining limitations
+
+- Provider claim/restoration state is in-memory by design: crash recovery
+  derives from the persisted raw-counter/sync cursors plus native absolute or
+  historical facts, so no serializer or migration change was needed.
+- A fatal (non-revertible) persistence loss still tears down all services per
+  ADR 0007; movement observed inside such a window is unrecoverable and that
+  tier remains fail-closed rather than synthesized.

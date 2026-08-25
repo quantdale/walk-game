@@ -93,7 +93,7 @@ namespace WalkGame.Tests
             provider.SetSimulatedPermission(ActivityPermissionState.Denied);
             provider.DebugAddSteps(5000);
 
-            Assert.IsNull(provider.ReadSnapshotAsync(new ActivityCursor()).GetAwaiter().GetResult());
+            Assert.IsNull(provider.PreparePassiveDeliveryAsync(new ActivityCursor()).GetAwaiter().GetResult());
             Assert.AreEqual(SessionStartError.PermissionDenied,
                 provider.StartSessionAsync(SessionType.Walk).GetAwaiter().GetResult());
 
@@ -148,7 +148,7 @@ namespace WalkGame.Tests
                 provider.GetCapabilityAsync().GetAwaiter().GetResult().motionPermission);
             Assert.AreEqual(ActivityPermissionState.Unavailable,
                 provider.RequestMotionPermissionAsync().GetAwaiter().GetResult());
-            Assert.IsNull(provider.ReadSnapshotAsync(new ActivityCursor()).GetAwaiter().GetResult());
+            Assert.IsNull(provider.PreparePassiveDeliveryAsync(new ActivityCursor()).GetAwaiter().GetResult());
             Assert.AreEqual(SessionStartError.SensorUnavailable,
                 provider.StartSessionAsync(SessionType.Walk).GetAwaiter().GetResult());
         }
@@ -172,7 +172,14 @@ namespace WalkGame.Tests
 
             public Task<ActivityPermissionState> RequestMotionPermissionAsync() => _request;
 
-            public Task<ActivitySnapshot> ReadSnapshotAsync(ActivityCursor cursor) => _inner.ReadSnapshotAsync(cursor);
+            public Task<PreparedActivityDelivery> PreparePassiveDeliveryAsync(ActivityCursor cursor) =>
+                _inner.PreparePassiveDeliveryAsync(cursor);
+
+            public void ResolvePreparedDelivery(PreparedActivityDelivery delivery, bool durable) =>
+                _inner.ResolvePreparedDelivery(delivery, durable);
+
+            public void ResolveSessionCompletion(string sessionId, bool durable) =>
+                _inner.ResolveSessionCompletion(sessionId, durable);
 
             public Task<SessionStartError> StartSessionAsync(SessionType sessionType) =>
                 _inner.StartSessionAsync(sessionType);
@@ -187,7 +194,9 @@ namespace WalkGame.Tests
             public string ProviderId => "test.throwing";
             public Task<ActivityCapability> GetCapabilityAsync() => throw new InvalidOperationException("boom");
             public Task<ActivityPermissionState> RequestMotionPermissionAsync() => throw new InvalidOperationException("boom");
-            public Task<ActivitySnapshot> ReadSnapshotAsync(ActivityCursor cursor) => throw new InvalidOperationException("boom");
+            public Task<PreparedActivityDelivery> PreparePassiveDeliveryAsync(ActivityCursor cursor) => throw new InvalidOperationException("boom");
+            public void ResolvePreparedDelivery(PreparedActivityDelivery delivery, bool durable) { }
+            public void ResolveSessionCompletion(string sessionId, bool durable) { }
             public Task<SessionStartError> StartSessionAsync(SessionType sessionType) => throw new InvalidOperationException("boom");
             public Task<ActiveSessionSample> PollSessionAsync() => throw new InvalidOperationException("boom");
             public Task<ActivitySessionResult> StopSessionAsync() => throw new InvalidOperationException("boom");

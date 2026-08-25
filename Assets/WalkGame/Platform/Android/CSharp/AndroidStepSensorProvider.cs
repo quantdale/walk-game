@@ -43,6 +43,11 @@ namespace WalkGame.Platform.Android
         private readonly ActivitySyncState _syncState;
         private ActiveSessionState _session;
 
+        // ADR 0009: base movement of a completed Expedition held until its profile
+        // commit resolves, so a rejected save can restore it instead of eating it.
+        private string _pendingCompletionSessionId;
+        private long _pendingCompletionSessionSteps;
+
         // Runtime refinement over the native tri-state: once a request round has
         // completed without grant, later non-granted reports mean "denied", not
         // "never asked" (Android 11+ stops showing the dialog entirely after
@@ -204,30 +209,33 @@ namespace WalkGame.Platform.Android
             return ReadRefinedPermission();
         }
 
-        /// <summary>Drains steps accumulated since the previous successful read. While an
+        /// <summary>Prepares the passive delivery of steps accumulated since the previous
+        /// successful read (ADR 0009). The claim stages the folded delta without making
+        /// it unavailable: until <see cref="ResolvePreparedDelivery"/> acknowledges a
+        /// durable commit, the same movement stays retryable in this process. While an
         /// Expedition session is active it owns the whole counter stream, so passive
-        /// reads are suppressed and cannot double-credit its steps (campaign S8).</summary>
-        public Task<ActivitySnapshot> ReadSnapshotAsync(ActivityCursor cursor)
+        /// preparation is suppressed and cannot double-credit its steps (campaign S8).</summary>
+        public Task<PreparedActivityDelivery> PreparePassiveDeliveryAsync(ActivityCursor cursor)
         {
             lock (_gate)
             {
                 if (!IsCounterAvailable() || ReadRefinedPermission() != ActivityPermissionState.Granted)
                 {
-                    return Task.FromResult<ActivitySnapshot>(null);
+                    return Task.FromResult<PreparedActivityDelivery>(null);
                 }
 
                 if (_session != null)
                 {
-                    return Task.FromResult<ActivitySnapshot>(null);
+                    return Task.FromResult<PreparedActivityDelivery>(null);
                 }
 
                 EnsureMonitoringStarted();
                 ConsumeRawCounter();
 
-                long pending = _reconciler.DrainPending();
+                long pending = _reconciler.ClaimPending();
                 if (pending <= 0)
                 {
-                    return Task.FromResult<ActivitySnapshot>(null);
+                    return Task.FromResult<PreparedActivityDelivery>(null);
                 }
 
                 DateTime end = _clock.UtcNow;
@@ -245,7 +253,68 @@ namespace WalkGame.Platform.Android
                     quality = new ActivityQuality { hasStepEvidence = true },
                 };
                 snapshot.providerRecordIds.Add($"android.counter.{end.Ticks}");
-                return Task.FromResult(snapshot);
+                return Task.FromResult(new PreparedActivityDelivery { snapshot = snapshot });
+            }
+        }
+
+        /// <summary>ADR 0009 resolution. Durable success drops the open claim; a rejected
+        /// commit returns its steps to the pending stream so the same base movement is
+        /// retried instead of lost. The runtime baseline intentionally stays ahead of a
+        /// rolled-back persisted cursor: folds only credit raw increases from that
+        /// baseline, and a process restart re-seeds from the conservative persisted
+        /// value, so both paths reconstruct the uncommitted window exactly once.</summary>
+        public void ResolvePreparedDelivery(PreparedActivityDelivery delivery, bool durable)
+        {
+            if (delivery == null)
+            {
+                return;
+            }
+
+            lock (_gate)
+            {
+                if (!_reconciler.HasOpenClaim)
+                {
+                    return; // already resolved or stale: idempotent no-op
+                }
+
+                if (durable)
+                {
+                    _reconciler.AcknowledgeClaim();
+                }
+                else
+                {
+                    _reconciler.RestoreClaim();
+                    _log.Warning("Passive delivery rejected after a failed save; movement restored for retry.");
+                }
+            }
+        }
+
+        /// <summary>ADR 0009 session resolution: a rejected completion returns the
+        /// Expedition's base steps to the passive stream, where they are credited once
+        /// through normal reconciliation (the session id was never durably marked, so
+        /// no double credit is possible). Unknown/stale ids are ignored.</summary>
+        public void ResolveSessionCompletion(string sessionId, bool durable)
+        {
+            if (string.IsNullOrEmpty(sessionId))
+            {
+                return;
+            }
+
+            lock (_gate)
+            {
+                if (!string.Equals(_pendingCompletionSessionId, sessionId, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                long steps = _pendingCompletionSessionSteps;
+                _pendingCompletionSessionId = null;
+                _pendingCompletionSessionSteps = 0;
+                if (!durable && steps > 0)
+                {
+                    _reconciler.RestorePending(steps);
+                    _log.Warning("Expedition save failed; base steps restored to the passive stream for retry.");
+                }
             }
         }
 
@@ -330,6 +399,13 @@ namespace WalkGame.Platform.Android
 
             DateTime endUtc = _clock.UtcNow;
             PersistCursor(endUtc);
+
+            // ADR 0009: hold the session's base movement until the enclosing profile
+            // commit resolves; ResolveSessionCompletion then drops it (durable) or
+            // returns it to the passive stream (rejected).
+            _pendingCompletionSessionId = finished.sessionId;
+            _pendingCompletionSessionSteps = sessionSteps;
+
             return Task.FromResult(new ActivitySessionResult
             {
                 sessionId = finished.sessionId,

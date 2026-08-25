@@ -78,12 +78,12 @@ namespace WalkGame.Tests
             var restarted = CreateActivityService(_profile);
             Assert.IsTrue(restarted.HasInterruptedSession);
 
-            long suppressed = restarted.ProcessPassiveSnapshot(PassiveSnapshot(1200));
+            long suppressed = restarted.ProcessPassiveSnapshot(PassiveSnapshot(1200)).acceptedSteps;
             Assert.AreEqual(0, suppressed, "before recovery the stale marker still suppresses");
             Assert.AreEqual(0, _ledger.GetBalance());
 
             Assert.IsTrue(restarted.RecoverInterruptedSession());
-            long credited = restarted.ProcessPassiveSnapshot(PassiveSnapshot(1200));
+            long credited = restarted.ProcessPassiveSnapshot(PassiveSnapshot(1200)).acceptedSteps;
             Assert.AreEqual(1200, credited);
             Assert.AreEqual(1200, _ledger.GetBalance());
             Assert.AreEqual(1200, _profile.lifetimeAcceptedSteps);
@@ -153,8 +153,8 @@ namespace WalkGame.Tests
             BeginLiveExpedition();
             _activity.AbandonExpedition(); // stop failed -> controller abandons safely
 
-            long first = _activity.ProcessPassiveSnapshot(PassiveSnapshot(700));
-            long second = _activity.ProcessPassiveSnapshot(PassiveSnapshot(700));
+            long first = _activity.ProcessPassiveSnapshot(PassiveSnapshot(700)).acceptedSteps;
+            long second = _activity.ProcessPassiveSnapshot(PassiveSnapshot(700)).acceptedSteps;
 
             Assert.AreEqual(700, first);
             Assert.AreEqual(0, second, "the same physical window must not pay twice");
@@ -168,10 +168,10 @@ namespace WalkGame.Tests
 
             // Suppressed reads must be invisible to dedup/cursors so the real window
             // can be paid later through the normal stream.
-            Assert.AreEqual(0, _activity.ProcessPassiveSnapshot(PassiveSnapshot(300)));
+            Assert.AreEqual(0, _activity.ProcessPassiveSnapshot(PassiveSnapshot(300)).acceptedSteps);
             _activity.RecoverInterruptedSession();
 
-            long credited = _activity.ProcessPassiveSnapshot(PassiveSnapshot(300));
+            long credited = _activity.ProcessPassiveSnapshot(PassiveSnapshot(300)).acceptedSteps;
             Assert.AreEqual(300, credited);
             var cursor = _profile.activityState.lastSuccessfulSyncUtc.GetValueOrDefault();
             Assert.AreEqual(_clock.UtcNow, cursor, "cursor advanced with the credited interval");

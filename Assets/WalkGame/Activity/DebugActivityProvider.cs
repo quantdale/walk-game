@@ -23,6 +23,13 @@ namespace WalkGame.Activity
 
         private ActiveSessionState _session;
 
+        // ADR 0009 staging: movement held by an unresolved prepared delivery. The
+        // fake counter only truly empties when the application acknowledges a
+        // durable commit; rejection returns the staged steps for retry.
+        private PreparedActivityDelivery _passiveClaim;
+        private string _pendingSessionId;
+        private long _pendingSessionSteps;
+
         public DebugActivityProvider(IClock clock)
         {
             _clock = clock ?? throw new ArgumentNullException(nameof(clock));
@@ -51,34 +58,33 @@ namespace WalkGame.Activity
             });
         }
 
-        /// <summary>Passive delta since cursor: everything accumulated on the fake counter.</summary>
-        public Task<ActivitySnapshot> ReadSnapshotAsync(ActivityCursor cursor)
+        /// <summary>Passive delta since cursor: everything accumulated on the fake counter,
+        /// staged as a prepared delivery (ADR 0009) instead of being consumed outright.</summary>
+        public Task<PreparedActivityDelivery> PreparePassiveDeliveryAsync(ActivityCursor cursor)
         {
             if (SimulateSensorUnavailable || _permission != ActivityPermissionState.Granted)
             {
-                return Task.FromResult<ActivitySnapshot>(null);
+                return Task.FromResult<PreparedActivityDelivery>(null);
             }
 
             // While an Expedition runs, the session owns the counter stream (S8).
-            lock (_gate)
-            {
-                if (_session != null)
-                {
-                    return Task.FromResult<ActivitySnapshot>(null);
-                }
-            }
-
             long steps;
             lock (_gate)
             {
-                steps = (long)_rawCumulativeStepCounter;
-                // Passive reads consume the counter like an OS reconciliation would.
-                _rawCumulativeStepCounter = 0;
-            }
+                if (_session != null || _passiveClaim != null)
+                {
+                    return Task.FromResult<PreparedActivityDelivery>(null);
+                }
 
-            if (steps <= 0)
-            {
-                return Task.FromResult<ActivitySnapshot>(null);
+                steps = (long)_rawCumulativeStepCounter;
+                if (steps <= 0)
+                {
+                    return Task.FromResult<PreparedActivityDelivery>(null);
+                }
+
+                // Stage the movement; it only stays emptied once the delivery is
+                // durably acknowledged.
+                _rawCumulativeStepCounter = 0;
             }
 
             var end = _clock.UtcNow;
@@ -102,7 +108,67 @@ namespace WalkGame.Activity
                 },
             };
             snapshot.providerRecordIds.Add($"debug.passive.{end.Ticks}");
-            return Task.FromResult(snapshot);
+            var delivery = new PreparedActivityDelivery { snapshot = snapshot };
+
+            lock (_gate)
+            {
+                _passiveClaim = delivery;
+            }
+
+            return Task.FromResult(delivery);
+        }
+
+        /// <summary>ADR 0009 resolution: acknowledge drops the staged movement; reject
+        /// returns it to the fake counter so a retry cannot lose base movement.
+        /// Unknown/stale deliveries are ignored (idempotent).</summary>
+        public void ResolvePreparedDelivery(PreparedActivityDelivery delivery, bool durable)
+        {
+            if (delivery == null)
+            {
+                return;
+            }
+
+            lock (_gate)
+            {
+                if (_passiveClaim == null ||
+                    !string.Equals(_passiveClaim.deliveryId, delivery.deliveryId, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                long stagedSteps = _passiveClaim.snapshot?.stepCount ?? 0;
+                _passiveClaim = null;
+                if (!durable)
+                {
+                    _rawCumulativeStepCounter += stagedSteps;
+                }
+            }
+        }
+
+        /// <summary>ADR 0009 session resolution: reject returns the session's base steps
+        /// to the passive counter so they stay recoverable; acknowledge drops them.</summary>
+        public void ResolveSessionCompletion(string sessionId, bool durable)
+        {
+            if (string.IsNullOrEmpty(sessionId))
+            {
+                return;
+            }
+
+            lock (_gate)
+            {
+                if (!string.Equals(_pendingSessionId, sessionId, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                long steps = _pendingSessionSteps;
+                _pendingSessionId = null;
+                _pendingSessionSteps = 0;
+                if (!durable)
+                {
+                    _rawCumulativeStepCounter += steps;
+                }
+            }
         }
 
         public Task<SessionStartError> StartSessionAsync(SessionType sessionType)
@@ -197,6 +263,18 @@ namespace WalkGame.Activity
                 verifiedMovingSeconds = finished.movingSeconds,
                 cadenceConsistency = SimulateMissingCadence ? null : 0.9f,
             };
+
+            // Session-owned progress leaves the passive stream here: it is held as
+            // the completion claim until the profile commit resolves. Without this
+            // subtraction the same steps would be delivered passively after the
+            // session even when its result committed durably (M8.3 audit fix).
+            lock (_gate)
+            {
+                _rawCumulativeStepCounter = Math.Max(0, _rawCumulativeStepCounter - finished.accumulatedSteps);
+                _pendingSessionId = finished.sessionId;
+                _pendingSessionSteps = finished.accumulatedSteps;
+            }
+
             return Task.FromResult(result);
         }
 

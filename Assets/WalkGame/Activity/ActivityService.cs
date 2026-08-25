@@ -4,6 +4,46 @@ using WalkGame.Core;
 namespace WalkGame.Activity
 {
     /// <summary>
+    /// Explicit disposition of one passive reconciliation pass (ADR 0009). Replaces
+    /// the old "infer from acceptedSteps == 0" ambiguity: callers can now decide
+    /// correctly whether a durable profile write is required and how to resolve the
+    /// provider delivery.
+    /// </summary>
+    public enum PassiveReconciliationDisposition
+    {
+        /// <summary>The provider had nothing to deliver; no canonical change.</summary>
+        NoDelivery = 0,
+        /// <summary>An Expedition owns the movement window; delivery suppressed,
+        /// no canonical change. The caller must reject the delivery back to the
+        /// provider so its movement stays retryable after the session.</summary>
+        SuppressedBySession = 1,
+        /// <summary>Duplicate delivery whose dedup/cursor state is already durable:
+        /// no canonical change this pass. Safe to acknowledge without a save.</summary>
+        DuplicateDurable = 2,
+        /// <summary>Canonical state mutated (dedup key added, cursor advanced,
+        /// reward/progression credited): requires a durable commit before the
+        /// delivery may be acknowledged.</summary>
+        DurableMutation = 3
+    }
+
+    /// <summary>Structured outcome of <see cref="ActivityService.ProcessPassiveSnapshot"/>.</summary>
+    public sealed class PassiveReconciliationResult
+    {
+        public PassiveReconciliationDisposition disposition;
+        public long acceptedSteps;
+
+        public bool RequiresCommit =>
+            disposition == PassiveReconciliationDisposition.DurableMutation;
+
+        public static PassiveReconciliationResult For(
+            PassiveReconciliationDisposition disposition,
+            long acceptedSteps = 0)
+        {
+            return new PassiveReconciliationResult { disposition = disposition, acceptedSteps = acceptedSteps };
+        }
+    }
+
+    /// <summary>
     /// Normalization pipeline host (TECHNICAL_ARCHITECTURE 9):
     /// provider data -> dedup -> trust -> reward -> VitalityLedger credit,
     /// then sync cursor advances together with the credit so a crash between
@@ -37,31 +77,37 @@ namespace WalkGame.Activity
 
         /// <summary>
         /// Processes one passive provider snapshot. Passive movement earns base Vitality
-        /// only - never speed/route bonuses (ACTIVITY_REWARD_SYSTEM 4). Returns accepted steps.
+        /// only - never speed/route bonuses (ACTIVITY_REWARD_SYSTEM 4). Returns an
+        /// explicit mutation outcome so the caller can skip no-op saves and resolve
+        /// the prepared provider delivery correctly (ADR 0009).
         /// Exactly-once policy (campaign S8): while an Expedition is active the passive
         /// stream is suppressed entirely - both pathways would otherwise claim the same
         /// physical steps; the active session owns its window and passive windows resume
         /// after its end. Suppressed reads do not touch dedup keys or cursors.
         /// </summary>
-        public long ProcessPassiveSnapshot(ActivitySnapshot snapshot)
+        public PassiveReconciliationResult ProcessPassiveSnapshot(ActivitySnapshot snapshot)
         {
             if (snapshot == null)
             {
-                return 0;
+                return PassiveReconciliationResult.For(PassiveReconciliationDisposition.NoDelivery);
             }
 
             if (_profile.activityState.activeSession != null)
             {
                 _log.Debug("Passive snapshot suppressed: Expedition in progress owns the movement window.");
-                return 0;
+                return PassiveReconciliationResult.For(PassiveReconciliationDisposition.SuppressedBySession);
             }
 
             string dedupKey = snapshot.IntervalDedupKey();
             if (!_profile.activityState.creditedIntervals.TryMarkCredited(dedupKey))
             {
                 _log.Debug($"Passive interval already credited: {dedupKey}");
+                DateTime before = _profile.activityState.lastSuccessfulSyncUtc ?? DateTime.MinValue;
                 AdvanceCursor(snapshot);
-                return 0;
+                bool cursorChanged = (_profile.activityState.lastSuccessfulSyncUtc ?? DateTime.MinValue) > before;
+                return cursorChanged
+                    ? PassiveReconciliationResult.For(PassiveReconciliationDisposition.DurableMutation)
+                    : PassiveReconciliationResult.For(PassiveReconciliationDisposition.DuplicateDurable);
             }
 
             long acceptedSteps = Math.Max(0, snapshot.stepCount);
@@ -78,7 +124,7 @@ namespace WalkGame.Activity
 
             AdvanceCursor(snapshot);
             CheckStepMilestones();
-            return acceptedSteps;
+            return PassiveReconciliationResult.For(PassiveReconciliationDisposition.DurableMutation, acceptedSteps);
         }
 
         /// <summary>

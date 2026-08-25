@@ -54,9 +54,11 @@ namespace WalkGame.Tests
         public void PassiveSteps_CreditBaseVitality_Once()
         {
             // 800 stays below the 1,000-step milestone so this isolates base credit.
-            long credited = _activity.ProcessPassiveSnapshot(PassiveSnapshot(800));
+            var outcome = _activity.ProcessPassiveSnapshot(PassiveSnapshot(800));
 
-            Assert.AreEqual(800, credited);
+            Assert.AreEqual(800, outcome.acceptedSteps);
+            Assert.AreEqual(PassiveReconciliationDisposition.DurableMutation, outcome.disposition);
+            Assert.IsTrue(outcome.RequiresCommit);
             Assert.AreEqual(800, _ledger.GetBalance());
             Assert.AreEqual(800, _profile.lifetimeAcceptedSteps);
         }
@@ -66,9 +68,12 @@ namespace WalkGame.Tests
         {
             var snapshot = PassiveSnapshot(800);
             _activity.ProcessPassiveSnapshot(snapshot);
-            long secondPass = _activity.ProcessPassiveSnapshot(snapshot);
+            var secondPass = _activity.ProcessPassiveSnapshot(snapshot);
 
-            Assert.AreEqual(0, secondPass);
+            Assert.AreEqual(0, secondPass.acceptedSteps);
+            Assert.AreEqual(PassiveReconciliationDisposition.DuplicateDurable, secondPass.disposition,
+                "a fully-durable duplicate requires no new profile write");
+            Assert.IsFalse(secondPass.RequiresCommit);
             Assert.AreEqual(800, _ledger.GetBalance());
             Assert.AreEqual(800, _profile.lifetimeAcceptedSteps);
         }
@@ -78,22 +83,23 @@ namespace WalkGame.Tests
         {
             // Simulate: steps accumulate, get credited, then device reboots (counter reset).
             _provider.DebugAddSteps(2000);
-            var snapshot = _provider.ReadSnapshotAsync(new ActivityCursor()).GetAwaiter().GetResult();
-            long first = _activity.ProcessPassiveSnapshot(snapshot);
+            var delivery = _provider.PreparePassiveDeliveryAsync(new ActivityCursor()).GetAwaiter().GetResult();
+            long first = _activity.ProcessPassiveSnapshot(delivery.snapshot).acceptedSteps;
             Assert.Greater(first, 0);
+            _provider.ResolvePreparedDelivery(delivery, durable: true); // committed save acknowledged
 
             _provider.DebugSimulateReboot();
 
             // After reboot the counter restarts at zero; next read has no new steps and
             // must not produce negative or duplicate rewards.
-            var afterReboot = _provider.ReadSnapshotAsync(new ActivityCursor
+            var afterReboot = _provider.PreparePassiveDeliveryAsync(new ActivityCursor
             {
                 lastSuccessfulSyncUtc = _profile.activityState.lastSuccessfulSyncUtc,
             }).GetAwaiter().GetResult();
 
-            if (afterReboot != null)
+            if (afterReboot?.snapshot != null)
             {
-                long credited = _activity.ProcessPassiveSnapshot(afterReboot);
+                long credited = _activity.ProcessPassiveSnapshot(afterReboot.snapshot).acceptedSteps;
                 Assert.LessOrEqual(credited + 1, 1);
                 Assert.GreaterOrEqual(_profile.lifetimeAcceptedSteps, first);
             }
@@ -189,8 +195,8 @@ namespace WalkGame.Tests
         public void PermissionDenied_ProducesNoSnapshots_ButGameRemainsPlayable()
         {
             _provider.DebugSetPermission(false);
-            var snapshot = _provider.ReadSnapshotAsync(new ActivityCursor()).GetAwaiter().GetResult();
-            Assert.IsNull(snapshot);
+            var delivery = _provider.PreparePassiveDeliveryAsync(new ActivityCursor()).GetAwaiter().GetResult();
+            Assert.IsNull(delivery);
             // Restoration economy unaffected by activity availability.
             _ledger.Credit(new VitalityCredit { amount = 500, reasonCode = WellKnownIds.ReasonCodes.DebugGrant });
             Assert.AreEqual(500, _ledger.GetBalance());
@@ -240,12 +246,16 @@ namespace WalkGame.Tests
             _provider.DebugAddSteps(3000);
 
             // Provider level: the session owns the counter stream.
-            var snapshot = _provider.ReadSnapshotAsync(new ActivityCursor()).GetAwaiter().GetResult();
-            Assert.IsNull(snapshot);
+            var delivery = _provider.PreparePassiveDeliveryAsync(new ActivityCursor()).GetAwaiter().GetResult();
+            Assert.IsNull(delivery);
 
-            // Domain level (defense in depth): even a delivered snapshot is ignored.
-            long credited = _activity.ProcessPassiveSnapshot(PassiveSnapshot(3000));
-            Assert.AreEqual(0, credited);
+            // Domain level (defense in depth): even a delivered snapshot is ignored,
+            // with an explicit suppressed disposition so the caller rejects the
+            // provider delivery instead of acknowledging or saving it.
+            var outcome = _activity.ProcessPassiveSnapshot(PassiveSnapshot(3000));
+            Assert.AreEqual(0, outcome.acceptedSteps);
+            Assert.AreEqual(PassiveReconciliationDisposition.SuppressedBySession, outcome.disposition);
+            Assert.IsFalse(outcome.RequiresCommit);
             Assert.AreEqual(0, _ledger.GetBalance());
         }
 
@@ -292,8 +302,11 @@ namespace WalkGame.Tests
                 quality = new ActivityQuality { hasStepEvidence = true },
             };
 
-            Assert.AreEqual(6000, _activity.ProcessPassiveSnapshot(snapshotA));
-            Assert.AreEqual(0, _activity.ProcessPassiveSnapshot(snapshotB));
+            Assert.AreEqual(6000, _activity.ProcessPassiveSnapshot(snapshotA).acceptedSteps);
+            var duplicateOutcome = _activity.ProcessPassiveSnapshot(snapshotB);
+            Assert.AreEqual(0, duplicateOutcome.acceptedSteps);
+            Assert.AreEqual(PassiveReconciliationDisposition.DuplicateDurable, duplicateOutcome.disposition,
+                "cursor already covers this interval; no canonical change remains");
             Assert.AreEqual(6000, _profile.lifetimeAcceptedSteps,
                 "the replayed window must add zero additional steps");
         }
@@ -306,8 +319,8 @@ namespace WalkGame.Tests
             var replay = PassiveSnapshot(900);
             replay.providerRecordIds.Add("native-record-b");
 
-            Assert.AreEqual(900, _activity.ProcessPassiveSnapshot(first));
-            Assert.AreEqual(0, _activity.ProcessPassiveSnapshot(replay));
+            Assert.AreEqual(900, _activity.ProcessPassiveSnapshot(first).acceptedSteps);
+            Assert.AreEqual(0, _activity.ProcessPassiveSnapshot(replay).acceptedSteps);
             Assert.AreEqual(900, _profile.lifetimeAcceptedSteps);
             Assert.AreEqual(900, _ledger.GetBalance());
         }
@@ -315,7 +328,9 @@ namespace WalkGame.Tests
         [Test]
         public void EmptySnapshot_ProducesNothing()
         {
-            Assert.AreEqual(0, _activity.ProcessPassiveSnapshot(null));
+            var nullOutcome = _activity.ProcessPassiveSnapshot(null);
+            Assert.AreEqual(PassiveReconciliationDisposition.NoDelivery, nullOutcome.disposition);
+            Assert.IsFalse(nullOutcome.RequiresCommit, "a null read never justifies a profile write");
             Assert.IsNull(_activity.ProcessSessionResult(null, growthEligible: false));
             Assert.AreEqual(0, _ledger.GetBalance());
         }

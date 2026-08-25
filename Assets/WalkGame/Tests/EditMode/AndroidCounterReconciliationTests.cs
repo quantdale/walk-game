@@ -130,6 +130,95 @@ namespace WalkGame.Tests
             Assert.AreEqual(20, _reconciler.DrainPending());
         }
 
+        // ---- ADR 0009 prepared-delivery claim semantics ------------------------
+
+        [Test]
+        public void ClaimPending_StagesMovement_WithoutDestroyingRetryability()
+        {
+            _reconciler.Fold(1000);
+            _reconciler.Fold(1200);
+
+            Assert.AreEqual(200, _reconciler.ClaimPending());
+            Assert.IsTrue(_reconciler.HasOpenClaim);
+            Assert.AreEqual(0, _reconciler.PendingDelta, "pending moved into the open claim");
+
+            // Overlapping preparation cannot open a second claim over the same window.
+            Assert.AreEqual(0, _reconciler.ClaimPending());
+            Assert.IsTrue(_reconciler.HasOpenClaim);
+        }
+
+        [Test]
+        public void AcknowledgeClaim_IsIdempotent_AndNeverRestores()
+        {
+            _reconciler.Fold(1000);
+            _reconciler.Fold(1100);
+            Assert.AreEqual(100, _reconciler.ClaimPending());
+
+            _reconciler.AcknowledgeClaim();
+            _reconciler.AcknowledgeClaim(); // repeated ack: safe no-op
+            _reconciler.RestoreClaim();     // late reject after ack: must not resurrect
+
+            Assert.IsFalse(_reconciler.HasOpenClaim);
+            Assert.AreEqual(0, _reconciler.PendingDelta, "acknowledged movement never replays");
+        }
+
+        [Test]
+        public void RestoreClaim_IsIdempotent_AndNeverGoesNegative()
+        {
+            _reconciler.Fold(1000);
+            _reconciler.Fold(1300);
+            Assert.AreEqual(300, _reconciler.ClaimPending());
+
+            _reconciler.RestoreClaim();
+            _reconciler.RestoreClaim(); // repeated reject: still exactly 300
+
+            Assert.IsFalse(_reconciler.HasOpenClaim);
+            Assert.AreEqual(300, _reconciler.PendingDelta);
+
+            // The restored window is retryable exactly once.
+            Assert.AreEqual(300, _reconciler.ClaimPending());
+            _reconciler.RestoreClaim();
+            Assert.AreEqual(300, _reconciler.PendingDelta);
+        }
+
+        [Test]
+        public void RebootAfterRejectedClaim_KeepsLegitimatePending_NoHugeOrNegativeReward()
+        {
+            _reconciler.Fold(1000);
+            _reconciler.Fold(1200);
+            Assert.AreEqual(200, _reconciler.ClaimPending());
+            _reconciler.RestoreClaim(); // commit failed; steps returned for retry
+
+            // Device reboots before the retry: rebaseline, but the uncredited 200
+            // remain legitimately pending and are delivered once, never doubled.
+            Assert.AreEqual(CounterFoldOutcome.Rebaselined, _reconciler.Fold(30));
+            Assert.AreEqual(200, _reconciler.PendingDelta);
+
+            _reconciler.Fold(80);
+            Assert.AreEqual(250, _reconciler.PendingDelta);
+            Assert.AreEqual(250, _reconciler.ClaimPending());
+            _reconciler.AcknowledgeClaim();
+            Assert.AreEqual(0, _reconciler.PendingDelta);
+        }
+
+        [Test]
+        public void ProcessRestartAfterRejectedDelivery_ReconstructsUncommittedWindowOnce()
+        {
+            // Durable cursor says raw=1000 (the rejected delivery never committed).
+            var restarted = new AndroidCounterReconciler();
+            restarted.SeedFromPersistedCounter(1000);
+
+            // Live absolute counter includes the uncommitted window plus new walking.
+            restarted.Fold(1250);
+            Assert.AreEqual(250, restarted.PendingDelta,
+                "the uncommitted window is reconstructed from the durable cursor exactly once");
+
+            Assert.AreEqual(250, restarted.ClaimPending());
+            restarted.AcknowledgeClaim(); // the retry's commit succeeds
+            restarted.Fold(1300);
+            Assert.AreEqual(50, restarted.PendingDelta, "only genuinely new movement remains");
+        }
+
         [Test]
         public void SeedFromPersistedCursor_SameBootRestart_ResumesAndCreditsMissedWindow()
         {

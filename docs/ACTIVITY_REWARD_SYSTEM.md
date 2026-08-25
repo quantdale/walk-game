@@ -355,6 +355,16 @@ If counter resets because of reboot/provider reset:
 - Establish new baseline.
 - Do not interpret reset as negative steps.
 
+Delivery durability (ADR 0009): the folded delta is staged as a prepared claim
+and only dropped after the enclosing profile commit proves it durable. A
+rejected commit returns claimed steps to the pending stream for exactly one
+retry; the runtime baseline may transiently sit ahead of the rolled-back
+persisted cursor because folds credit only raw increases from that baseline and
+a restart re-seeds conservatively from the persisted value. Reboot/anomaly
+rebaselining never converts restored pending steps into huge, negative, or
+double rewards. Expedition completion holds the session's base steps until its
+commit resolves; rejection returns them to the passive stream.
+
 ## 17. iOS historical reconciliation
 
 Core Motion `CMPedometer` provides up to seven days of historical pedestrian data.
@@ -365,11 +375,24 @@ On app launch:
 - Persist new sync cursor.
 - Never re-credit the same time interval.
 
+Delivery durability (ADR 0009): preparation consumes nothing provider-private,
+and both resolutions are no-ops — a failed application commit rewinds the
+durable successful-sync cursor with the profile rollback, leaving exactly that
+window queryable again; durable dedup/cursor state suppresses anything that did
+commit. Completed sessions recover through the same history path because the
+rolled-back profile never advances the cursor past an uncredited window.
+
 If the app has not opened beyond the available history window, explain that only available device history can be imported unless later HealthKit support is enabled.
 
 ## 18. Debug provider
 
 Before native integration, build an `IActivityProvider` fake/debug implementation.
+
+The debug provider mirrors the production delivery contract (ADR 0009) so
+standalone tests exercise transaction semantics: passive reads stage movement
+instead of zeroing the fake counter, rejected deliveries restore it, session
+progress leaves the passive stream at stop and is held until its commit
+resolves.
 
 Required debug controls:
 - Add 1,000 steps.

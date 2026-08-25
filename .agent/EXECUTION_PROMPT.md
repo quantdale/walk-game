@@ -1,6 +1,6 @@
 # Execution Prompt — M8.3 Movement Delivery Durability & Activity Write Discipline
 
-**Status:** ACTIVE  
+**Status:** COMPLETE  
 **Planned-From:** `main@15384b6bbf106b3a910c9b5a4152bcb562557fc9`  
 **Target branch:** `main`  
 **Campaign type:** non-hardware hardening / movement-state integrity  
@@ -341,3 +341,18 @@ At the end:
 6. Fetch, run the remote-advance guard, integrate safely to `main`, push without force, and release the writer lease on normal completion.
 
 Do not stop after making the happy path pass. The point of M8.3 is to prove the failure/retry/crash semantics across the complete movement delivery pipeline.
+
+---
+
+## Executor Report (M8.3, completed 2026-08-25)
+
+- **Start SHA / final SHA:** `8d1f9c7250c0ac72b59dc3b8958ffeef94bf6a5d` → see final commit on `agent/walk-game/m8.3-fc6b02fe` (planned-from `15384b6b`; the two planner-only commits in between touched only this file and were reconciled).
+- **Root causes:** (1) providers irreversibly consumed movement (`DrainPending`, debug counter zeroing, session partitioning) before `CommitChanges()` resolved, so a failed save permanently dropped the window while never doubling it; (2) `ProcessPassiveSnapshot` returned an ambiguous step count so callers could neither skip no-op cadence saves nor resolve deliveries correctly; (3) audit additionally found a latent debug-provider double credit: simulated session steps stayed in the passive counter after a durably credited session and were paid again by the next passive tick.
+- **Final transaction design:** ADR 0009 prepared-delivery contract — `PreparePassiveDeliveryAsync` stages without consuming; application processes against canonical profile and attempts the commit; `ResolvePreparedDelivery`/`ResolveSessionCompletion` acknowledge exactly once after durable proof or reject to restore retryable pending state; idempotent for stale/repeated/unknown resolutions; crash recovery always derives from persisted cursors + native absolute/history facts, never from in-memory receipts.
+- **Provider behavior:** Android — engine-free claim state machine (`ClaimPending/AcknowledgeClaim/RestoreClaim`), single open claim blocks overlapping claims, rejection keeps restored pending through reboot/anomaly rebaseline, runtime-baseline-ahead-of-cursor proven safe in-process and across restart; Expedition base steps held as completion claim, rejected saves return them to passive. iOS — no-op resolutions; failed commit rewinds the durable sync cursor with the rollback so the identical history window retries; dedup stays durable-authoritative. Debug — full transactional mirror in the standalone suite, plus the session/passive double-credit fix above.
+- **Passive failure semantics:** suppressed deliveries are rejected back (movement held, not lost); proven duplicates acknowledge with zero profile writes; cursor/dedup-only repairs still persist; null/no-movement reads never save.
+- **Expedition failure semantics:** same-process result replay retries until durably marked (rollback frees the session-id mark), or provider returns base steps to the passive stream; UI remains durability-gated/truthful; stale-marker boot recovery untouched.
+- **Tests added/changed:** new `MovementDeliveryDurabilityTests` (14 scenarios including fault-injected real rollback→reject→retry exactly-once for both passive and Expedition paths); `AndroidCounterReconciliationTests` +6 claim scenarios; disposition/idempotency assertions threaded through `ActivityServiceTests`, `InterruptedSessionRecoveryTests`, `PermissionFlowTests`, `PlayerExperienceTests`.
+- **Validation results:** domain suite **165/165 PASS** (baseline 146/146) via `dotnet test` + `verify-domain.ps1`; `verify-release-hygiene.ps1` PASS (61 sources); `verify-unity-static.ps1` PASS (100 assets/100 metas); `Test-AgentGuards.ps1` **36/36 PASS** (first run's 12 sh-matrix failures were environmental WSL-vs-Git-Bash PATH shadowing, reproduced clean with Git Bash first on PATH); identity guard exit 0 pre/post; `git diff --check` clean.
+- **UNVERIFIED tiers:** Unity EditMode/PlayMode (account-level licensing blocker unchanged; repro commands recorded in IMPLEMENTATION_STATUS.md); Android/iOS device tiers (no build modules/hardware). No native device evidence invented.
+- **Deferred follow-ups:** none new; M8.2 follow-ups 3 and 4 are resolved by this campaign (struck through in IMPLEMENTATION_STATUS.md).

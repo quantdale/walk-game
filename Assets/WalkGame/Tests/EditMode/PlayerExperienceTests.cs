@@ -136,7 +136,7 @@ namespace WalkGame.Tests
                 intervalStartUtc = _clock.UtcNow.AddMinutes(-1),
                 intervalEndUtc = _clock.UtcNow,
                 stepCount = 500,
-            }));
+            }).acceptedSteps);
 
             var result = activity.ProcessSessionResult(new ActivitySessionResult
             {

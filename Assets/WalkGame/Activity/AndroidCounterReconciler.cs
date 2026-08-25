@@ -37,6 +37,7 @@ namespace WalkGame.Activity
 
         private readonly long _maxPlausibleDelta;
         private double? _lastRaw;
+        private long _claimedDelta;
 
         public AndroidCounterReconciler(long maxPlausibleDelta = DefaultMaxPlausibleDelta)
         {
@@ -53,6 +54,9 @@ namespace WalkGame.Activity
 
         /// <summary>Steps folded in since the last drain.</summary>
         public long PendingDelta { get; private set; }
+
+        /// <summary>True while a prepared delivery holds claimed steps (ADR 0009).</summary>
+        public bool HasOpenClaim => _claimedDelta > 0;
 
         public bool HasBaseline => _lastRaw.HasValue;
 
@@ -120,6 +124,44 @@ namespace WalkGame.Activity
             long pending = PendingDelta;
             PendingDelta = 0;
             return pending;
+        }
+
+        /// <summary>
+        /// Prepares a passive delivery (ADR 0009): moves all currently-pending steps
+        /// into the open claim so exactly one delivery can hold them. Returns 0 when a
+        /// claim is already open - overlapping reads can never prepare two claims over
+        /// one pending window. The steps stay recoverable until the claim is resolved.
+        /// </summary>
+        public long ClaimPending()
+        {
+            if (_claimedDelta > 0)
+            {
+                return 0;
+            }
+
+            long claimed = PendingDelta;
+            PendingDelta = 0;
+            _claimedDelta = claimed;
+            return claimed;
+        }
+
+        /// <summary>Drops the open claim after a proven durable commit. Idempotent; an
+        /// absent claim is a safe no-op.</summary>
+        public void AcknowledgeClaim()
+        {
+            _claimedDelta = 0;
+        }
+
+        /// <summary>Returns the open claim to the pending stream after a rejected/
+        /// rolled-back delivery, making the same movement retryable exactly once in
+        /// this process. Idempotent; an absent claim is a safe no-op.</summary>
+        public void RestoreClaim()
+        {
+            if (_claimedDelta > 0)
+            {
+                PendingDelta += _claimedDelta;
+                _claimedDelta = 0;
+            }
         }
 
         /// <summary>Returns previously-undrained steps to the passive stream (campaign S8:

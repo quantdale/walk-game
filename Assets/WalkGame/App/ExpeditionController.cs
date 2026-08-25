@@ -168,7 +168,11 @@ namespace WalkGame.App
             // A failed commit reverts the session reward in place; the Changed refresh
             // below then presents the reverted (truthful) state instead of a phantom win.
             bool durable = host.CommitChanges();
-            StatusMessage = durable ? "Expedition complete" : "Expedition finished, but it could not be saved";
+            // ADR 0009: resolve the provider's held session movement against the proven
+            // durability outcome - a rejected save returns its base steps to the passive
+            // stream, so the Expedition's movement is retried instead of silently lost.
+            host.Provider.ResolveSessionCompletion(result.sessionId, durable);
+            StatusMessage = durable ? "Expedition complete" : "Expedition finished, but it could not be saved; your steps stay safe and will be credited once saving works again";
             Changed?.Invoke();
         }
 

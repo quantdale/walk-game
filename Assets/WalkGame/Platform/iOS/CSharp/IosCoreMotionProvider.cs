@@ -188,7 +188,14 @@ namespace WalkGame.Platform.iOS
             return Task.FromResult(capability);
         }
 
-        public async Task<ActivitySnapshot> ReadSnapshotAsync(ActivityCursor cursor)
+        /// <summary>
+        /// Prepares the next passive delivery from a historical query. Core Motion's
+        /// absolute history makes this naturally retryable (ADR 0009): nothing private
+        /// is consumed at preparation, and the durable successful-sync cursor only
+        /// advances inside the committed profile - so a failed application commit
+        /// leaves this exact time window queryable again.
+        /// </summary>
+        public async Task<PreparedActivityDelivery> PreparePassiveDeliveryAsync(ActivityCursor cursor)
         {
             if (WG_IsPedometerAvailable() == 0 ||
                 (ActivityPermissionState)WG_GetAuthorizationStatus() != ActivityPermissionState.Granted)
@@ -240,7 +247,23 @@ namespace WalkGame.Platform.iOS
                 },
             };
             snapshot.providerRecordIds.Add($"ios.history.{until.Ticks}");
-            return snapshot;
+            return new PreparedActivityDelivery { snapshot = snapshot };
+        }
+
+        /// <summary>ADR 0009 resolution: no provider-private movement was consumed by
+        /// preparation, so there is nothing to restore or drop here. A rejected commit
+        /// rewinds the durable sync cursor with the profile rollback, making the same
+        /// historical window retryable; duplicate intervals stay suppressed by durable
+        /// dedup/cursor state once anything does commit.</summary>
+        public void ResolvePreparedDelivery(PreparedActivityDelivery delivery, bool durable)
+        {
+        }
+
+        /// <summary>ADR 0009 session resolution: live caches reset natively at stop and
+        /// the completed window remains recoverable through the historical query path
+        /// because the rolled-back profile never advanced lastSuccessfulSyncUtc past it.</summary>
+        public void ResolveSessionCompletion(string sessionId, bool durable)
+        {
         }
 
         public Task<SessionStartError> StartSessionAsync(SessionType sessionType)

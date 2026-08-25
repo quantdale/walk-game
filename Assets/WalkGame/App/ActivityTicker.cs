@@ -16,7 +16,12 @@ namespace WalkGame.App
     ///    focus changes (a second trigger while busy is simply dropped);
     ///  - faults are caught, logged structurally, surfaced via LastReconcileFailed,
     ///    and never advance the sync cursor (cursor advances live in the domain);
-    ///  - persistence happens only after successful state mutation.
+    ///  - persistence happens only after successful state mutation, and the 30s
+    ///    cadence never commits when reconciliation changed nothing durable while
+    ///    every cursor/dedup/reward mutation still persists (ADR 0009);
+    ///  - prepared provider deliveries are resolved exactly once against the
+    ///    durability outcome: acknowledged on committed/duplicate-durable passes,
+    ///    rejected back to retryable pending on suppression or failed saves.
     /// All reward logic stays in the domain; this is pure scheduling glue.
     /// </summary>
     public sealed class ActivityTicker : MonoBehaviour
@@ -68,8 +73,8 @@ namespace WalkGame.App
                     providerCursor = host.Profile.activityState.providerCursor,
                 };
 
-                var readTask = host.Provider.ReadSnapshotAsync(cursor);
-                var readObservation = new TaskObservation<ActivitySnapshot>();
+                var readTask = host.Provider.PreparePassiveDeliveryAsync(cursor);
+                var readObservation = new TaskObservation<PreparedActivityDelivery>();
                 var readObserver = TaskObservation.Observe(readTask, readObservation);
                 float deadline = Time.realtimeSinceStartup + ReconcileTimeoutSeconds;
                 while (!readObserver.IsCompleted && Time.realtimeSinceStartup < deadline)
@@ -91,14 +96,33 @@ namespace WalkGame.App
                     yield break;
                 }
 
-                var snapshot = readObservation.Value;
-                if (snapshot != null)
+                var prepared = readObservation.Value;
+                if (prepared?.snapshot != null)
                 {
-                    // Domain credit + cursor advance mutate together; commit only after
-                    // success - a failed write rolls the whole window back (ADR 0007).
-                    host.Activity.ProcessPassiveSnapshot(snapshot);
-                    host.Profile.activityState.providerCursor = null; // debug provider keeps no extra cursor
-                    host.CommitChanges();
+                    // ADR 0009: the delivery is processed against the canonical profile,
+                    // then resolved exactly once against the proven durability outcome -
+                    // acknowledge after a committed save (or a duplicate whose durable
+                    // state already proves consumption), reject back to retryable pending
+                    // on suppression or a failed/rolled-back save.
+                    var outcome = host.Activity.ProcessPassiveSnapshot(prepared.snapshot);
+                    bool resolvedDurably;
+                    if (outcome.RequiresCommit)
+                    {
+                        // Domain credit + cursor advance mutate together; commit only
+                        // after success - a failed write rolls the whole window back.
+                        resolvedDurably = host.CommitChanges();
+                        if (!resolvedDurably)
+                        {
+                            LastReconcileFailed = true;
+                            host.Log.Warning("Activity commit failed; passive movement returned to the provider for retry.");
+                        }
+                    }
+                    else
+                    {
+                        resolvedDurably = outcome.disposition != PassiveReconciliationDisposition.SuppressedBySession;
+                    }
+
+                    host.Provider.ResolvePreparedDelivery(prepared, resolvedDurably);
                 }
             }
             finally
@@ -182,7 +206,8 @@ namespace WalkGame.App
                 teleportJump: false);
 
             host.Activity.ProcessSessionResult(result, growthEligible: false);
-            host.CommitChanges();
+            bool durable = host.CommitChanges();
+            debug.ResolveSessionCompletion(result.sessionId, durable);
             ActivityProcessed?.Invoke();
         }
 

@@ -196,9 +196,11 @@ Do not infer mode from which camera happens to be enabled.
 public interface IActivityProvider
 {
     Task<ActivityCapability> GetCapabilityAsync();
-    Task<ActivitySnapshot> ReadSnapshotAsync(ActivityCursor cursor);
-    Task StartSessionAsync(ActivitySessionConfig config);
-    Task<ActivitySessionSample> PollSessionAsync();
+    Task<PreparedActivityDelivery> PreparePassiveDeliveryAsync(ActivityCursor cursor);
+    void ResolvePreparedDelivery(PreparedActivityDelivery delivery, bool durable);
+    void ResolveSessionCompletion(string sessionId, bool durable);
+    Task<SessionStartError> StartSessionAsync(SessionType sessionType);
+    Task<ActiveSessionSample> PollSessionAsync();
     Task<ActivitySessionResult> StopSessionAsync();
 }
 ```
@@ -212,6 +214,16 @@ Implementations:
 
 Game reward code must never call platform-native APIs directly.
 
+Passive movement crosses the boundary as a **prepared delivery** (ADR 0009):
+preparation stages the window inside the provider without making it
+irrecoverable; the application resolves each delivery exactly once against the
+proven durability outcome — acknowledge after a committed save (or a duplicate
+whose durable state already proves consumption), reject on suppression or a
+failed/rolled-back save so the same base movement stays retryable. Completed
+session results resolve through the same contract. Process death never depends
+on in-memory receipts: restart reconstruction derives from the persisted
+cursor plus the native absolute/history source.
+
 ## 9. Activity normalization pipeline
 
 ```text
@@ -219,7 +231,9 @@ Native provider data
   ↓
 Provider-specific normalization
   ↓
-Activity deduplication/reconciliation
+Prepared delivery staged by the provider (ADR 0009)
+  ↓
+Activity deduplication/reconciliation -> explicit mutation outcome
   ↓
 Plausibility/trust analysis
   ↓
@@ -228,9 +242,11 @@ Reward calculation
 VitalityLedger credit
   ↓
 Persist cursor + ledger transaction atomically
+  ↓
+Resolve provider delivery against the durability outcome
 ```
 
-The last two operations must not allow step credit without advancing the sync cursor, or duplicate rewards can occur after crashes.
+The credit and cursor operations must not allow step credit without advancing the sync cursor, or duplicate rewards can occur after crashes. The final resolution must not acknowledge a delivery whose commit failed, or observed movement is lost; and must not re-deliver one whose durable state already proves consumption, or it is credited twice.
 
 ## 10. Transaction principle
 
@@ -250,6 +266,12 @@ Publish domain events
 ```
 
 If persistence fails, rollback in-memory transaction or reload last known-good state.
+
+Activity cadence writes follow the same discipline with an explicit mutation
+outcome (ADR 0009): the 30-second ticker commits only when reconciliation
+actually mutated canonical state (reward, dedup key, or cursor) and skips the
+save entirely for suppressed or already-proven-durable duplicate deliveries —
+without weakening durability for any real change.
 
 ## 11. Domain events
 

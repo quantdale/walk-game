@@ -28,9 +28,17 @@ namespace WalkGame.Activity
             return Task.FromResult(ActivityPermissionState.Unavailable);
         }
 
-        public Task<ActivitySnapshot> ReadSnapshotAsync(ActivityCursor cursor)
+        public Task<PreparedActivityDelivery> PreparePassiveDeliveryAsync(ActivityCursor cursor)
         {
-            return Task.FromResult<ActivitySnapshot>(null);
+            return Task.FromResult<PreparedActivityDelivery>(null);
+        }
+
+        public void ResolvePreparedDelivery(PreparedActivityDelivery delivery, bool durable)
+        {
+        }
+
+        public void ResolveSessionCompletion(string sessionId, bool durable)
+        {
         }
 
         public Task<SessionStartError> StartSessionAsync(SessionType sessionType)

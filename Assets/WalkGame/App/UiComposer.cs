@@ -334,7 +334,8 @@ namespace WalkGame.App
                 movingSeconds = result.verifiedMovingSeconds,
             }, true, false, false);
             host.Activity.ProcessSessionResult(result, growthEligible: false);
-            host.CommitChanges();
+            bool durable = host.CommitChanges();
+            debug.ResolveSessionCompletion(result.sessionId, durable);
             RefreshAll();
         }
 

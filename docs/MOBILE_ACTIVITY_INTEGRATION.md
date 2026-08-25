@@ -78,6 +78,13 @@ Implication:
 
 ### Query pattern
 
+Historical queries are naturally retryable under the ADR 0009 delivery
+contract: `PreparePassiveDeliveryAsync` wraps the queried window in a prepared
+delivery without consuming anything provider-private, and both resolutions are
+no-ops. If the application commit fails, the profile rollback rewinds the
+durable successful-sync cursor so the identical window is re-queried next
+cycle; durable dedup/cursor state suppresses anything that did commit.
+
 Conceptual Swift:
 
 ```swift
@@ -167,6 +174,15 @@ When raw counter decreases:
 - Do not subtract previous credited steps.
 
 Persist the latest raw counter after a successful reward transaction.
+
+Delivery lifecycle (ADR 0009): the folded delta is staged as a prepared claim
+(`ClaimPending`) and delivered passively; the provider drops the claim only on
+durable acknowledgment and restores it for one same-process retry when the
+profile commit is rejected. The persisted `androidLastRawStepCounter` advances
+only inside a committed profile, so process death before commit replays the
+uncommitted window exactly once from the durable cursor plus the live absolute
+counter. Completed Expedition base steps are held as a completion claim and
+returned to the passive stream when their commit fails.
 
 ## 6. Android `TYPE_STEP_DETECTOR`
 
