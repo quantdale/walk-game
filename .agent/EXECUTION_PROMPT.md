@@ -1,6 +1,6 @@
 # Execution Prompt — M8.1 Save Integrity & Persistence Failure Containment
 
-**Status:** ACTIVE  
+**Status:** COMPLETE  
 **Planned-From:** `main@0cdf823755466a604967fe88ac4913b345d5d294`  
 **Target branch:** `main`  
 **Campaign type:** non-hardware hardening / state-integrity correction  
@@ -297,3 +297,21 @@ This campaign is complete only when all of the following are true:
 Proceed autonomously through all unblocked work. Do not stop merely to ask what to do next when the repository, tests, and this prompt provide enough information. When implementation choices are ambiguous, select the smallest design that satisfies the documented invariants and prove it with tests. If an external gate is blocked, record it honestly and continue every unblocked workstream.
 
 The campaign is about **making loss of player progress structurally difficult**, not about making failure messages prettier. Correct durability semantics are the acceptance criterion.
+
+---
+
+## Executor report (M8.1 campaign complete)
+
+- **Start SHA:** `02261f5` (post-pull HEAD; prompt planned from `0cdf823`, no intervening M8.1 work landed). **Final SHA:** this commit.
+- **Systems changed:**
+  - `Persistence/SaveAbstractions.cs` + `FileSaveRepository.cs` — trust-checked rotation, byte-preserving quarantine (`<slot>.quarantined`), forward-schema save refusal, new `RecoveredFromBackupForwardSchema` result, `ISaveRepository.QuarantineAll`.
+  - `Persistence/PersistenceCoordinator.cs` (new) — `PersistenceHealth`/`PersistencePolicy` boot+mutation policy, transactional `Commit` with revert/fatal outcomes.
+  - `Persistence/ProfileStateCopier.cs` (new) — hand-written IL2CPP-safe in-place profile rollback; `Core/IPostCopyRepair.cs` repairs derived dedup indexes.
+  - `App/GameHost.cs` — health state machine, fail-closed boot, `CommitChanges()` containment, lifecycle-autosave gating, blocked-mode scene composition, `RetryLoadFromDisk`/`StartOverWithFreshProfile`.
+  - `App/SaveRecoveryController.cs` (new) — recovery UX per Workstream E.
+  - `App/{ActivityTicker,ExpeditionController,AppFlowController,UiComposer}.cs` — all durable mutations routed through `CommitChanges`; success-only feedback suppressed on failed commits; truthful save-health copy.
+- **Root causes fixed:** fresh-profile fabrication over Failed/Incompatible loads; corrupt-main-over-trusted-backup rotation hazard; forward-schema rewrite path; fire-and-forget persistence lying about durability; lifecycle autosave overwriting preserved bytes.
+- **Tests added:** `SaveIntegrityApplicationTests` (10), `SaveLoadTests` (+9 incl. six-point interruption matrix), PlayMode blocked-boot/start-over gates in `RuntimeCertificationTests` (2, editor-gated).
+- **Validation (exact commands/results):** `dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj` → **144/144 PASS (was 124 pre-campaign)**; `scripts/verify-domain.ps1` → PASS; `scripts/verify-release-hygiene.ps1` → PASS (61 runtime sources); `scripts/verify-unity-static.ps1` → PASS (99 assets / 99 metas); `git diff --check` → clean.
+- **UNVERIFIED gates (unchanged environment blockers):** Unity EditMode/PlayMode (`scripts/verify-unity-editmode.ps1` / `-playmode`) require a licensed pinned editor session; Android/iOS device tiers require modules/hardware per IMPLEMENTATION_STATUS. PlayMode coverage for blocked boot is committed but not executed here.
+- **Deliberately deferred:** none within scope; no schema change was required (quarantine files are additive artifacts; `entries` remains canonical for dedup stores).

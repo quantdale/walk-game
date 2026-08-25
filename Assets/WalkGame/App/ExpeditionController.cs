@@ -28,7 +28,8 @@ namespace WalkGame.App
 
         public void StartExpedition(SessionType type)
         {
-            if (IsActive || IsBusy)
+            var host = GameHost.Current;
+            if (IsActive || IsBusy || host == null || host.PersistenceBlocked)
             {
                 return;
             }
@@ -164,8 +165,10 @@ namespace WalkGame.App
                 teleportJump: false);
             LastResult = host.Activity.ProcessSessionResult(result, growthEligible: false);
             LastRewardMessage = BuildRewardMessage(LastResult);
-            StatusMessage = "Expedition complete";
-            host.Persist();
+            // A failed commit reverts the session reward in place; the Changed refresh
+            // below then presents the reverted (truthful) state instead of a phantom win.
+            bool durable = host.CommitChanges();
+            StatusMessage = durable ? "Expedition complete" : "Expedition finished, but it could not be saved";
             Changed?.Invoke();
         }
 

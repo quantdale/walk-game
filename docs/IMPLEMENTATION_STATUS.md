@@ -12,11 +12,11 @@ Evidence tiers:
 - **DEVICE** — requires physical/emulated mobile hardware.
 - **UNVERIFIED** — claimed by no evidence yet.
 
-Last updated: 2026-08-23 (M8 device-ready certification & release hardening campaign)
+Last updated: 2026-08-25 (M8.1 save-integrity & persistence-failure containment campaign)
 
 ## Verification status
 
-- Domain test suite: **124/124 passing (AUTOMATED)** via
+- Domain test suite: **144/144 passing (AUTOMATED)** via
   `dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj`
   (`scripts/verify-domain.ps1`; also runs in CI on every push/PR to `main`).
 - CI domain gate: configured (`.github/workflows/domain-tests.yml`) now including the
@@ -157,6 +157,44 @@ been silently dropping them was found and fixed). Regression suites:
 Physical Android/iOS lifecycle, sensor, performance, store, playtest, and post-MVP
 expansion gates remain unverified or intentionally out of scope for this campaign.
 
+## M8.1 save-integrity record (ADR 0007)
+
+Fail-closed persistence campaign executed from `.agent/EXECUTION_PROMPT.md`:
+
+1. **Boot no longer fabricates profiles over failed saves** — only an empty save
+   directory auto-creates one (`PersistencePolicy.HealthForBoot`); `Failed`,
+   `IncompatibleSchema`, and the new `RecoveredFromBackupForwardSchema` boot into a
+   blocked recovery mode where no gameplay service, ticker, rig, or HUD exists and
+   lifecycle autosave cannot write — AUTOMATED (policy mapping; PlayMode blocked-boot
+   lifecycle gates committed but UNVERIFIED until a licensed editor run).
+2. **Trusted-backup rotation invariant proven** — the pre-campaign algorithm copied a
+   corrupt main over the trusted backup during the first post-recovery save;
+   `FileSaveRepository.Save` now read-backs the main slot first, quarantines corrupt
+   material byte-for-byte to `<slot>.quarantined`, seeds the backup from validated
+   payload before touching main, and refuses rotation over forward-schema evidence —
+   AUTOMATED (`SaveLoadTests` interruption matrix across six fault points plus
+   success/evidence cases).
+3. **Transactional commits** — every player-visible durable mutation goes through
+   `GameHost.CommitChanges()`/`PersistenceCoordinator`; a failed write reverts the
+   canonical graph IN PLACE to exact disk truth via the hand-written IL2CPP-safe
+   `ProfileStateCopier` (reference-preserving for services/providers/actors), or the
+   host enters blocked state on fatal loss; collection/restoration/expedition/
+   onboarding/settings paths suppress success feedback on failure and surface truthful
+   copy — AUTOMATED (coordinator outcomes incl. exactly-once replay consistency after
+   rollback; serialized-graph fidelity gate).
+4. **Truthful recovery UX** — `SaveRecoveryController` replaces the playable runtime in
+   blocked mode: plain-language explanation per failure class, in-place load retry,
+   two-tap-confirmed "start over" that quarantines instead of deletes; the misleading
+   "session is still playable" copy is gone — static hygiene PASS; visual behavior
+   UNVERIFIED (editor).
+5. **Docs** — ADR 0007 added; TECHNICAL_ARCHITECTURE §15 and DATA_MODEL §20 extended
+   with the health/transaction contract.
+
+Environment blockers unchanged from M8: no licensed Unity editor session, no Android
+Build Support module, no macOS/Xcode, no genuine step-counter hardware. All EDITOR- and
+DEVICE-tier gates remain UNVERIFIED; every unblocked deterministic gate was run this
+campaign (144/144 domain, hygiene audit, static audit, `git diff --check`).
+
 ## M8 runtime-defect record
 
 Defects discovered by first-import/runtime inspection and fixed this campaign:
@@ -204,7 +242,7 @@ Defects discovered by first-import/runtime inspection and fixed this campaign:
 
 | Gate | Result | Evidence |
 | --- | --- | --- |
-| Domain suite | PASS | 124/124 (`dotnet test`, this campaign) |
+| Domain suite | PASS | 144/144 (`dotnet test`, this campaign) |
 | Unity static audit | PASS | 94 assets/94 metas, pin + manifest invariants (`verify-unity-static.ps1`) |
 | Release hygiene / privacy audit | PASS | 57 runtime sources, minimal manifest (`verify-release-hygiene.ps1`) |
 | `git diff --check` | PASS | clean output at final gate run |
@@ -215,7 +253,9 @@ Defects discovered by first-import/runtime inspection and fixed this campaign:
 | Ashfall complete playthrough | PASS | `AshfallTests.DeadWorld_To_TransitGateAlignment_CompletesInDependencyOrder` |
 | Economy pacing replay | PASS | `AshfallEconomyPacingTests` (casual-walker window; idle-only completes nothing) |
 | Exactly-once activity | PASS | `ActivityServiceTests` + `InterruptedSessionRecoveryTests` (incl. save/reload) |
-| Save fault injection | PASS | `SaveLoadTests` (+ producer-prune regression) |
+| Save fault injection | PASS | `SaveLoadTests` (+ producer-prune regression, + M8.1 trusted-rotation matrix) |
+| Save-health boot policy & rollback containment (M8.1) | PASS | `SaveIntegrityApplicationTests` (policy mapping, coordinator outcomes, copier graph fidelity) |
+| Blocked-boot lifecycle & start-over quarantine (M8.1) | UNVERIFIED | PlayMode gates committed in `RuntimeCertificationTests`; requires licensed editor |
 | Android build | UNVERIFIED | AndroidPlayer module absent; build script release-shaped and ready |
 | Android install/launch/lifecycle smoke | UNVERIFIED | `verify-android-smoke.ps1` committed for first emulator/device |
 | Real step sensor | UNVERIFIED | physical device required |

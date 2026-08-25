@@ -334,6 +334,13 @@ Validation on load must reject or repair impossible state:
 - Completed projects must resolve or be preserved through migration mapping.
 - Timestamps far in the future should be flagged for reconciliation.
 
+Persistence health is itself a data contract (ADR 0007). Only `SaveLoadResult.Empty`
+may auto-create a fresh profile; `Failed`, `IncompatibleSchema`, and
+`RecoveredFromBackupForwardSchema` boot the application fail-closed with no durable
+mutation path, preserving the failed bytes until explicit player-approved recovery
+(quarantine, never deletion). Player-visible durable mutations commit transactionally:
+a failed write reverts the canonical graph in place to exact disk truth.
+
 ## 21. Migration strategy
 
 Every persisted model change that breaks compatibility must increment `schemaVersion`.

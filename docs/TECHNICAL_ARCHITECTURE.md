@@ -333,9 +333,20 @@ write failure, and backup-rotation cases can be tested without changing the prod
 algorithm. Save validation receives the trusted `IClock`; future timestamps are reported
 as anomalies and preserved for recovery rather than silently rewritten.
 
+Rotation is trust-checked (ADR 0007): the main slot is read back before it becomes the
+next backup. A corrupt main is quarantined byte-for-byte and the validated payload seeds
+the backup first; a forward-schema main refuses rotation entirely. At every injected
+interruption point at least one trustworthy copy of the last-known-good profile survives.
+
 On corruption:
 - Try backup.
 - Never silently reset player world if a backup exists.
+
+Application-level persistence health (ADR 0007) gates everything above: only an empty
+save directory auto-creates a profile, fatal load states boot fail-closed with no
+mutation surface or lifecycle autosave, and player-visible mutations commit
+transactionally - a failed write reverts canonical state to exact disk truth instead of
+diverging from it.
 
 ## 16. Offline production architecture
 

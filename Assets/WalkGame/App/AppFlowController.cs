@@ -40,6 +40,13 @@ namespace WalkGame.App
                 return;
             }
 
+            if (host.PersistenceBlocked)
+            {
+                // Fail-closed recovery mode composes no playable rig at all (ADR 0007).
+                enabled = false;
+                return;
+            }
+
             host.Events.Subscribe<ModeChanged>(OnModeChanged);
             BuildRuntimeRig();
 
@@ -178,7 +185,7 @@ namespace WalkGame.App
                     ? $"{lore.Title}: {lore.Body}"
                     : $"{lore.Title}: already recorded";
                 _dialogueUntil = Time.unscaledTime + 8f;
-                host.Persist();
+                host.CommitChanges();
                 _presenter.Refresh();
                 PresentationChanged?.Invoke();
             }
@@ -243,7 +250,7 @@ namespace WalkGame.App
 
             if (host.Placement.ConfirmMove(_previewPlacement, out _previewFailure))
             {
-                host.Persist();
+                host.CommitChanges();
                 _movingBuilding?.ClearPlacementPreview(host.Catalog.Ashfall,
                     host.Profile.worldState.GetOrCreateRegionState(host.Profile.worldState.currentRegionId).buildingStates[_movingBuilding.InstanceId]);
                 _presenter.Refresh();

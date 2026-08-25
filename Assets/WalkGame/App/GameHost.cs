@@ -14,6 +14,11 @@ namespace WalkGame.App
     /// Service composition root (TECHNICAL_ARCHITECTURE 6). Owns canonical services and
     /// the loaded profile; persists on pause/quit. This is the single sanctioned global
     /// handle in the codebase - it wires systems, it is not a grab-bag singleton.
+    ///
+    /// Persistence health contract (ADR 0007): only a genuinely empty save directory
+    /// auto-creates a fresh profile. Fatal load states (unreadable material or a newer
+    /// schema) boot into a fail-closed recovery mode where no gameplay system exists to
+    /// mutate state and lifecycle autosave cannot overwrite the preserved bytes.
     /// </summary>
     [DefaultExecutionOrder(-1000)]
     public sealed class GameHost : MonoBehaviour
@@ -50,7 +55,20 @@ namespace WalkGame.App
         public ModeStateMachine Modes { get; private set; }
         public SaveLoadResult LastSaveResult { get; private set; } = SaveLoadResult.Success;
 
+        /// <summary>Authoritative persistence-health state (ADR 0007).</summary>
+        public PersistenceHealth Health { get; private set; } = PersistenceHealth.Fresh;
+
+        public bool PersistenceBlocked => !PersistencePolicy.AllowsDurableMutation(Health);
+
+        /// <summary>Raised after a failed commit reverted canonical state to disk truth.</summary>
+        public event Action PersistenceReverted;
+
         private ISaveRepository _repository;
+        private PersistenceCoordinator _coordinator;
+        private GameObject _flowGo;
+        private GameObject _tickerGo;
+        private GameObject _uiGo;
+        private GameObject _recoveryGo;
 
         private void Awake()
         {
@@ -91,22 +109,59 @@ namespace WalkGame.App
                 new SaveMigrator(),
                 Log,
                 Clock);
+            _coordinator = new PersistenceCoordinator(
+                _repository,
+                Log,
+                () =>
+                {
+                    var pristine = NewProfile();
+                    EnsureRegionState(pristine.worldState);
+                    return pristine;
+                });
 
-            bool fresh = !_repository.TryLoad(out var profile, out var result);
-            if (fresh)
+            _repository.TryLoad(out var profile, out var result);
+            switch (result)
             {
-                profile = NewProfile();
-                Log.Info("Created fresh player profile.");
-            }
-            else if (result == SaveLoadResult.RecoveredFromBackup)
-            {
-                Log.Warning("Main save was unreadable; recovered last-known-good backup.");
+                case SaveLoadResult.Success:
+                    Health = PersistenceHealth.Healthy;
+                    break;
+                case SaveLoadResult.Empty:
+                    // Only an empty repository may manufacture a new profile.
+                    profile = NewProfile();
+                    Health = PersistenceHealth.Fresh;
+                    Log.Info("Created fresh player profile.");
+                    break;
+                case SaveLoadResult.RecoveredFromBackup:
+                    Health = PersistenceHealth.Recovered;
+                    Log.Warning("Main save was unreadable; recovered last-known-good backup.");
+                    break;
+                default:
+                    // Failed / IncompatibleSchema / RecoveredFromBackupForwardSchema:
+                    // fail closed instead of playing against a throwaway profile that
+                    // lifecycle autosave could persist over the preserved bytes.
+                    Health = PersistenceHealth.Blocked;
+                    Log.Warning($"Save material could not be loaded safely ({result}); entering fail-closed recovery mode.");
+                    break;
             }
 
             LastSaveResult = result == default ? SaveLoadResult.Success : result;
+
+            if (PersistenceBlocked)
+            {
+                Profile = null;
+                return;
+            }
+
             Profile = profile;
             Profile.worldState.currentRegionId = WellKnownIds.StartingRegionId;
 
+            BuildServices();
+            FinishServiceConstruction();
+        }
+
+        /// <summary>Constructs the gameplay service graph bound to the live profile.</summary>
+        private void BuildServices()
+        {
             Ledger = new VitalityLedger(Profile, Clock, Events, Log);
             Rewards = new RewardApplier(Profile, Clock, Events, Log);
             Restoration = new RestorationService(Catalog, Profile, Ledger, Rewards, Events, Log);
@@ -130,12 +185,15 @@ namespace WalkGame.App
             }
 
             Provider = CreateProvider();
-
             Modes = new ModeStateMachine(Events, Log);
+        }
 
-            EnsureRegionState();
+        /// <summary>Seeds missing region/building/producer state and resumes offline production.</summary>
+        private void FinishServiceConstruction()
+        {
+            EnsureRegionState(Profile.worldState);
             Production.EnsureProducerStates(Profile.worldState.currentRegionId);
-            ResumeProductionSummary = Production.AccrueAllWithSummary(Profile.worldState.currentRegionId); // offline window on resume
+            ResumeProductionSummary = Production.AccrueAllWithSummary(Profile.worldState.currentRegionId);
 
             Modes.TryTransition(GameMode.MainMenu);
         }
@@ -150,15 +208,41 @@ namespace WalkGame.App
         {
             CreateSunLight();
 
-            var flowGo = new GameObject("AppFlow");
-            var flow = flowGo.AddComponent<AppFlowController>();
+            if (PersistenceBlocked)
+            {
+                // Fail-closed recovery surface INSTEAD of the playable runtime: no
+                // AppFlow, ticker, HUD, expedition, or debug tool exists to mutate
+                // canonical state while saves cannot be loaded safely (ADR 0007).
+                _recoveryGo = new GameObject("SaveRecovery");
+                _recoveryGo.AddComponent<SaveRecoveryController>();
+                return;
+            }
 
-            var tickerGo = new GameObject("ActivityTicker");
-            var ticker = tickerGo.AddComponent<ActivityTicker>();
+            _flowGo = new GameObject("AppFlow");
+            var flow = _flowGo.AddComponent<AppFlowController>();
 
-            var uiGo = new GameObject("UiRoot");
-            var composer = uiGo.AddComponent<UiComposer>();
+            _tickerGo = new GameObject("ActivityTicker");
+            var ticker = _tickerGo.AddComponent<ActivityTicker>();
+
+            _uiGo = new GameObject("UiRoot");
+            var composer = _uiGo.AddComponent<UiComposer>();
             composer.Compose(flow, ticker);
+        }
+
+        private void ClearComposedRuntime()
+        {
+            foreach (var composed in new[] { _recoveryGo, _flowGo, _tickerGo, _uiGo })
+            {
+                if (composed != null)
+                {
+                    Destroy(composed);
+                }
+            }
+
+            _recoveryGo = null;
+            _flowGo = null;
+            _tickerGo = null;
+            _uiGo = null;
         }
 
         private static void CreateSunLight()
@@ -225,9 +309,8 @@ namespace WalkGame.App
 #endif
         }
 
-        private void EnsureRegionState()
+        private void EnsureRegionState(WorldState world)
         {
-            var world = Profile.worldState;
             foreach (var regionId in world.unlockedRegionIds)
             {
                 if (!world.regionStates.ContainsKey(regionId))
@@ -251,8 +334,19 @@ namespace WalkGame.App
             }
         }
 
+        /// <summary>
+        /// Best-effort durable write WITHOUT transactional containment. Reserved for
+        /// lifecycle autosave and internal use; player-visible mutations go through
+        /// <see cref="CommitChanges"/> so a failed write can never masquerade as durable.
+        /// Refuses to touch the failed slot while persistence health is blocked.
+        /// </summary>
         public bool Persist()
         {
+            if (_repository == null || Profile == null || PersistenceBlocked)
+            {
+                return false;
+            }
+
             var result = _repository.Save(Profile);
             LastSaveResult = result;
             if (result != SaveLoadResult.Success)
@@ -263,17 +357,144 @@ namespace WalkGame.App
             return result == SaveLoadResult.Success;
         }
 
+        /// <summary>
+        /// Transactional persistence boundary for every durable gameplay mutation
+        /// (ADR 0007). Returns true only when the mutation is durably committed. On a
+        /// write failure the coordinator reverts the live profile graph in place to the
+        /// exact last-known-good disk state (or pristine state for never-saved
+        /// sessions), keeping every service/actor reference valid; a fatal loss swaps
+        /// the runtime into blocked recovery mode. Callers must treat false as "not
+        /// saved" and refresh presentation through <see cref="PersistenceReverted"/>.
+        /// </summary>
+        public bool CommitChanges()
+        {
+            if (PersistenceBlocked || Profile == null)
+            {
+                return false;
+            }
+
+            var outcome = _coordinator.Commit(Profile);
+            switch (outcome)
+            {
+                case PersistenceCommitOutcome.Committed:
+                    LastSaveResult = SaveLoadResult.Success;
+                    return true;
+                case PersistenceCommitOutcome.RevertedToLastKnownGood:
+                    LastSaveResult = SaveLoadResult.Failed;
+                    PersistenceReverted?.Invoke();
+                    return false;
+                default:
+                    EnterBlockedState(_coordinator.LastFailure);
+                    return false;
+            }
+        }
+
+        /// <summary>In-place retry of the blocked load (e.g. a transient file lock cleared).</summary>
+        public bool RetryLoadFromDisk()
+        {
+            if (!PersistenceBlocked || _repository == null)
+            {
+                return false;
+            }
+
+            if (!_repository.TryLoad(out var profile, out var result))
+            {
+                return false;
+            }
+
+            var recoveredHealth = PersistencePolicy.HealthForBoot(result);
+            if (recoveredHealth == PersistenceHealth.Blocked)
+            {
+                // Still forward-schema evidence; remain fail-closed.
+                return false;
+            }
+
+            Health = recoveredHealth;
+            LastSaveResult = result;
+            Profile = profile;
+            Profile.worldState.currentRegionId = WellKnownIds.StartingRegionId;
+            BuildServices();
+            FinishServiceConstruction();
+            Log.Warning("Save became readable again; normal play resumed.");
+
+            ClearComposedRuntime();
+            ComposeRuntimeScene();
+            return true;
+        }
+
+        /// <summary>
+        /// Explicit destructive-recovery action behind the recovery UI's two-step
+        /// confirmation: quarantines ALL save material byte-for-byte (never deletes),
+        /// then boots a genuinely fresh profile. Only reachable from blocked health.
+        /// </summary>
+        public bool StartOverWithFreshProfile()
+        {
+            if (!PersistenceBlocked || _repository == null)
+            {
+                return false;
+            }
+
+            _repository.QuarantineAll();
+            Log.Warning("Player chose to start over; previous save material was quarantined.");
+
+            Health = PersistenceHealth.Fresh;
+            LastSaveResult = SaveLoadResult.Empty;
+            Profile = NewProfile();
+            BuildServices();
+            FinishServiceConstruction();
+
+            ClearComposedRuntime();
+            ComposeRuntimeScene();
+            return true;
+        }
+
+        /// <summary>Fatal mid-session persistence loss: tear down every mutating system.</summary>
+        private void EnterBlockedState(SaveLoadResult reason)
+        {
+            if (PersistenceBlocked && Profile == null)
+            {
+                return;
+            }
+
+            Health = PersistenceHealth.Blocked;
+            LastSaveResult = reason;
+            Profile = null;
+            Ledger = null;
+            Rewards = null;
+            Restoration = null;
+            Exploration = null;
+            Production = null;
+            Placement = null;
+            Activity = null;
+            Provider = null;
+            Modes = null;
+            ResumeProductionSummary = new ProductionSummary();
+
+            ClearComposedRuntime();
+            ComposeRuntimeScene();
+        }
+
         private void OnApplicationFocus(bool hasFocus)
         {
             if (!hasFocus)
             {
-                Persist();
+                AutosaveForLifecycle();
             }
         }
 
         private void OnApplicationPause(bool paused)
         {
             if (paused)
+            {
+                AutosaveForLifecycle();
+            }
+        }
+
+        private void AutosaveForLifecycle()
+        {
+            // A blocked session must never overwrite the preserved save material just
+            // because the app backgrounded or closed (ADR 0007 acceptance gate 2).
+            if (!PersistenceBlocked && Profile != null)
             {
                 Persist();
             }
@@ -286,7 +507,7 @@ namespace WalkGame.App
                 return;
             }
 
-            if (_repository != null && Profile != null)
+            if (_repository != null && Profile != null && !PersistenceBlocked)
             {
                 Persist();
             }

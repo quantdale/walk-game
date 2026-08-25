@@ -28,6 +28,7 @@ namespace WalkGame.App
         private MotionPermissionCoordinator _motionPermissions;
         private bool _permissionRequestInFlight;
         private string _resumeProductionMessage = string.Empty;
+        private string _saveHealthMessage = string.Empty;
 
         public void Compose(AppFlowController flow, ActivityTicker ticker)
         {
@@ -136,7 +137,7 @@ namespace WalkGame.App
                     grantVitality: amount =>
                     {
                         host.Ledger.Credit(new VitalityCredit { amount = amount, reasonCode = WellKnownIds.ReasonCodes.DebugGrant });
-                        host.Persist();
+                        host.CommitChanges();
                     },
                     advanceClockOneHour: () =>
                     {
@@ -163,6 +164,7 @@ namespace WalkGame.App
             host.Events.Subscribe<ActivityMilestoneReached>(OnActivityMilestoneCue);
             host.Events.Subscribe<LoreDiscovered>(OnLoreDiscoveredCue);
             host.Events.Subscribe<ModeChanged>(OnModeChangedCue);
+            host.PersistenceReverted += OnPersistenceReverted;
             _flow.PlacementFeedback += OnPlacementFeedback;
 
             if (_ticker != null)
@@ -214,6 +216,11 @@ namespace WalkGame.App
                 host.Events.Unsubscribe<ModeChanged>(OnModeChangedCue);
             }
 
+            if (host != null)
+            {
+                host.PersistenceReverted -= OnPersistenceReverted;
+            }
+
             if (_flow != null)
             {
                 _flow.PlacementFeedback -= OnPlacementFeedback;
@@ -234,6 +241,11 @@ namespace WalkGame.App
         private void ToggleMode()
         {
             var host = GameHost.Current;
+            if (host == null || host.Modes == null)
+            {
+                return;
+            }
+
             if (host.Modes.Current == GameMode.BuilderMode)
             {
                 _flow.EnterExplore();
@@ -303,7 +315,7 @@ namespace WalkGame.App
                 movingSeconds = result.verifiedMovingSeconds,
             }, true, false, false);
             host.Activity.ProcessSessionResult(result, growthEligible: false);
-            host.Persist();
+            host.CommitChanges();
             RefreshAll();
         }
 
@@ -315,6 +327,12 @@ namespace WalkGame.App
         private IReadOnlyList<PendingCollect> GetCollectables()
         {
             var host = GameHost.Current;
+            if (host?.Profile == null)
+            {
+                // Blocked/fatal persistence health composes no collectable surface.
+                return Array.Empty<PendingCollect>();
+            }
+
             string regionId = host.Profile.worldState.currentRegionId;
             host.Production.AccrueAll(regionId);
             return host.Production.GetPendingCollectables(regionId);
@@ -323,13 +341,24 @@ namespace WalkGame.App
         private void CollectProducer(string producerId)
         {
             var host = GameHost.Current;
+            if (host?.Profile == null)
+            {
+                return;
+            }
+
             var result = host.Production.Collect(host.Profile.worldState.currentRegionId, producerId);
             if (result.collected <= 0)
             {
                 return;
             }
 
-            host.Persist();
+            if (!host.CommitChanges())
+            {
+                // The collection was reverted with the failed write; no reward cue.
+                RefreshAll();
+                return;
+            }
+
             _feedback.Play(FeedbackCue.Collection);
             _flow.Presenter?.Refresh();
             RefreshAll();
@@ -338,7 +367,7 @@ namespace WalkGame.App
         private void CollectAll()
         {
             var host = GameHost.Current;
-            if (host == null)
+            if (host == null || host.Profile == null)
             {
                 return;
             }
@@ -349,7 +378,13 @@ namespace WalkGame.App
                 return;
             }
 
-            host.Persist();
+            if (!host.CommitChanges())
+            {
+                // The collection was reverted with the failed write; no reward cue.
+                RefreshAll();
+                return;
+            }
+
             _feedback.Play(FeedbackCue.Collection);
             _flow.Presenter?.Refresh();
             RefreshAll();
@@ -358,7 +393,7 @@ namespace WalkGame.App
         private IReadOnlyList<ProducerStatus> GetProducerStatuses()
         {
             var host = GameHost.Current;
-            if (host == null)
+            if (host == null || host.Profile == null)
             {
                 return Array.Empty<ProducerStatus>();
             }
@@ -381,22 +416,33 @@ namespace WalkGame.App
             return $"{sample.accumulatedSteps:N0} steps · {sample.accumulatedDistanceMeters / 1000d:0.0} km · {minutes:0} min moving";
         }
 
+        private void OnPersistenceReverted()
+        {
+            // The failed mutation was rolled back to disk truth; say so plainly instead
+            // of letting celebration copy stand for an action that was never saved.
+            _saveHealthMessage = "That change could not be saved, so it was undone. " +
+                                 "Your world matches its last good save; try again in a moment.";
+            RefreshAll();
+        }
+
         private string GetNextGoal()
         {
             var host = GameHost.Current;
-            if (host == null)
+            if (host == null || host.Profile == null)
             {
-                return string.Empty;
+                return "Save recovery needs attention. Your progress was not erased.";
             }
 
-            if (host.LastSaveResult == SaveLoadResult.RecoveredFromBackup)
+            if (!host.PersistenceBlocked && !string.IsNullOrEmpty(_saveHealthMessage))
             {
-                return "Recovered your last good save. Your progress is safe; keep playing normally.";
+                var saveMessage = _saveHealthMessage;
+                _saveHealthMessage = string.Empty;
+                return saveMessage;
             }
 
-            if (host.LastSaveResult == SaveLoadResult.Failed || host.LastSaveResult == SaveLoadResult.IncompatibleSchema)
+            if (host.Health == PersistenceHealth.Recovered)
             {
-                return "Save recovery needs attention. Your current session is still playable; do not uninstall while diagnostics are reviewed.";
+                return "We restored your world from its last good save after a file problem. Keep playing normally.";
             }
 
             if (!string.IsNullOrEmpty(_resumeProductionMessage))
@@ -455,13 +501,15 @@ namespace WalkGame.App
 
         private bool IsOnboardingVisible()
         {
-            return GameHost.Current != null && !GameHost.Current.Profile.settings.onboardingCompleted;
+            var host = GameHost.Current;
+            return host != null && host.Profile != null &&
+                   !host.Profile.settings.onboardingCompleted;
         }
 
         private string GetOnboardingMessage()
         {
             var host = GameHost.Current;
-            if (host == null)
+            if (host == null || host.Profile == null)
             {
                 return string.Empty;
             }
@@ -490,7 +538,7 @@ namespace WalkGame.App
         private void AdvanceOnboarding()
         {
             var host = GameHost.Current;
-            if (host == null)
+            if (host == null || host.Profile == null)
             {
                 return;
             }
@@ -501,16 +549,29 @@ namespace WalkGame.App
                 host.Profile.settings.onboardingCompleted = true;
             }
 
-            host.Persist();
+            if (!host.CommitChanges())
+            {
+                // Reverted; the onboarding card stays because progress did not stick.
+                RefreshAll();
+                return;
+            }
+
             RefreshAll();
         }
 
         private void DismissOnboarding()
         {
             var host = GameHost.Current;
-            if (host == null) return;
+            if (host == null || host.Profile == null) return;
             host.Profile.settings.onboardingCompleted = true;
-            host.Persist();
+            if (host.CommitChanges())
+            {
+                RefreshAll();
+                return;
+            }
+
+            // Dismissal could not be made durable: keep the card visible so the state
+            // never lies about what was saved.
             RefreshAll();
         }
 
@@ -536,7 +597,7 @@ namespace WalkGame.App
         private void ToggleHaptics()
         {
             _feedback.ToggleHaptics();
-            GameHost.Current?.Persist();
+            GameHost.Current?.CommitChanges();
             RefreshAll();
         }
 
@@ -556,7 +617,7 @@ namespace WalkGame.App
                 case AudioSetting.Effects: _feedback.AdjustEffects(delta); break;
             }
 
-            GameHost.Current?.Persist();
+            GameHost.Current?.CommitChanges();
             RefreshAll();
         }
 
@@ -745,11 +806,25 @@ namespace WalkGame.App
         private bool TryCompleteProject(string projectId)
         {
             var host = GameHost.Current;
+            if (host?.Profile == null || host.Restoration == null)
+            {
+                return false;
+            }
+
             bool completed = host.Restoration.TryComplete(projectId, out _);
             if (completed)
             {
-                host.Persist();
-                _flow.Presenter?.Refresh();
+                completed = host.CommitChanges();
+                if (completed)
+                {
+                    _flow.Presenter?.Refresh();
+                }
+                else
+                {
+                    // Restoration was rolled back with the failed write; the project
+                    // panel refresh shows it as available again instead of lying.
+                    RefreshAll();
+                }
             }
 
             return completed;

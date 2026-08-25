@@ -188,6 +188,151 @@ namespace WalkGame.Tests
             Assert.IsTrue(repository.MainSaveExists(), "incompatible save must never be deleted");
         }
 
+        /// <summary>
+        /// ADR 0007 acceptance gates 4/5: after booting from the backup because the main
+        /// file was corrupt, the FIRST save must never be able to destroy the last
+        /// trusted copy - at every injected interruption point a readable profile with
+        /// known-good vitality must survive.
+        /// </summary>
+        [Test]
+        public void FirstSaveAfterCorruptMainRecovery_CannotDestroyTrustedBackup_UnderAnyInterruptionPoint(
+            [Values("write", "copy", "move", "copy-from-temp", "move-temp-to-main", "quarantine-move")]
+            string fault)
+        {
+            const long trustedVitality = 4200; // VitalityLedger credits steps 1:1.
+            var setup = CreateRepository();
+            Assert.AreEqual(SaveLoadResult.Success, setup.Save(BuildPopulatedProfile(out _)));
+            File.WriteAllText(Path.Combine(_directory, "profile.json"), "{ corrupted main bytes");
+
+            Assert.IsTrue(setup.TryLoad(out var recovered, out var loadResult));
+            Assert.AreEqual(SaveLoadResult.RecoveredFromBackup, loadResult);
+            Assert.AreEqual(trustedVitality, recovered.vitalityBalance);
+
+            var fileSystem = new FaultInjectingSaveFileSystem();
+            switch (fault)
+            {
+                case "write": fileSystem.FailOperation = "write"; break;
+                case "copy": fileSystem.FailOperation = "copy"; break;
+                case "move": fileSystem.FailOperation = "move"; break;
+                case "copy-from-temp": fileSystem.FailCopyFromTemp = true; break;
+                case "move-temp-to-main": fileSystem.FailMoveTempToMain = true; break;
+                case "quarantine-move": fileSystem.FailQuarantineMove = true; break;
+            }
+
+            var failing = CreateRepository(fileSystem, Log.Disabled);
+            recovered.vitalityBalance += 999;
+            Assert.AreEqual(SaveLoadResult.Failed, failing.Save(recovered), $"fault={fault}");
+
+            bool loaded = CreateRepository().TryLoad(out var durable, out _);
+            Assert.IsTrue(loaded, $"fault={fault}: at least one trusted copy must survive");
+            Assert.That(durable.vitalityBalance, Is.EqualTo(trustedVitality).Or.EqualTo(trustedVitality + 999),
+                $"fault={fault}: only known-good states may remain");
+            Assert.IsFalse(File.Exists(Path.Combine(_directory, "profile.json.tmp")), $"fault={fault}");
+        }
+
+        [Test]
+        public void FirstSaveAfterRecovery_Succeeds_AndLeavesTwoValidSlots_PlusPreservedEvidence()
+        {
+            const long trustedVitality = 4200; // VitalityLedger credits steps 1:1.
+            var setup = CreateRepository();
+            Assert.AreEqual(SaveLoadResult.Success, setup.Save(BuildPopulatedProfile(out _)));
+            File.WriteAllText(Path.Combine(_directory, "profile.json"), "{ corrupted main bytes");
+
+            Assert.IsTrue(setup.TryLoad(out var recovered, out _));
+
+            recovered.vitalityBalance += 999;
+            Assert.AreEqual(SaveLoadResult.Success, setup.Save(recovered));
+
+            bool loaded = CreateRepository().TryLoad(out var durable, out var result);
+            Assert.IsTrue(loaded);
+            Assert.AreEqual(SaveLoadResult.Success, result);
+            Assert.AreEqual(trustedVitality + 999, durable.vitalityBalance,
+                "the recovered profile must become the authoritative save");
+            Assert.IsTrue(File.Exists(Path.Combine(_directory, "profile.json.quarantined")),
+                "failed source material is preserved byte-for-byte as evidence");
+            StringAssert.StartsWith("{ corrupted",
+                File.ReadAllText(Path.Combine(_directory, "profile.json.quarantined")));
+
+            // Rotation continues normally afterwards.
+            recovered.vitalityBalance += 1;
+            Assert.AreEqual(SaveLoadResult.Success, setup.Save(recovered));
+            Assert.IsTrue(CreateRepository().TryLoad(out _, out result));
+            Assert.AreEqual(SaveLoadResult.Success, result);
+        }
+
+        [Test]
+        public void ForwardSchemaMain_WithValidBackup_Recovers_ButSavesRefuseToRotateOverEvidence()
+        {
+            var repository = CreateRepository();
+            Assert.AreEqual(SaveLoadResult.Success, repository.Save(BuildPopulatedProfile(out _)));
+
+            string forwardPayload = _serializer.Serialize(
+                new PlayerProfile { schemaVersion = SaveSchemaVersions.Current + 5 });
+            File.WriteAllText(Path.Combine(_directory, "profile.json"), forwardPayload);
+
+            // Recovery succeeds from the older backup, but the result names the hazard.
+            bool loaded = repository.TryLoad(out var recovered, out var result);
+            Assert.IsTrue(loaded);
+            Assert.AreEqual(SaveLoadResult.RecoveredFromBackupForwardSchema, result);
+            Assert.IsNotNull(recovered);
+
+            // Saving would rewrite an older-schema world over newer evidence: refuse,
+            // and leave the forward bytes exactly as they were.
+            Assert.AreEqual(SaveLoadResult.Failed, repository.Save(recovered));
+            Assert.AreEqual(forwardPayload, File.ReadAllText(Path.Combine(_directory, "profile.json")),
+                "forward-schema evidence must remain byte-for-byte untouched");
+        }
+
+        [Test]
+        public void ForwardSchemaMain_WithoutUsableBackup_StaysIncompatible_AndRefusesToSave()
+        {
+            var repository = CreateRepository();
+            string forwardPayload = _serializer.Serialize(
+                new PlayerProfile { schemaVersion = SaveSchemaVersions.Current + 5 });
+            File.WriteAllText(Path.Combine(_directory, "profile.json"), forwardPayload);
+
+            bool loaded = repository.TryLoad(out _, out var result);
+            Assert.IsFalse(loaded);
+            Assert.AreEqual(SaveLoadResult.IncompatibleSchema, result);
+
+            Assert.AreEqual(SaveLoadResult.Failed, repository.Save(BuildPopulatedProfile(out _)));
+            Assert.AreEqual(forwardPayload, File.ReadAllText(Path.Combine(_directory, "profile.json")));
+        }
+
+        [Test]
+        public void StaleTempFile_IsNeverLoaded_AndIsCleanedAfterAFailedSave()
+        {
+            var repository = CreateRepository();
+            Assert.AreEqual(SaveLoadResult.Success, repository.Save(BuildPopulatedProfile(out _)));
+            File.WriteAllText(Path.Combine(_directory, "profile.json.tmp"), "stale garbage from an old crash");
+
+            // Load ignores the stale slot entirely.
+            bool loaded = repository.TryLoad(out var restored, out var result);
+            Assert.IsTrue(loaded);
+            Assert.AreEqual(SaveLoadResult.Success, result);
+
+            var failing = CreateRepository(
+                new FaultInjectingSaveFileSystem { FailOperation = "write" }, Log.Disabled);
+            Assert.AreEqual(SaveLoadResult.Failed, failing.Save(restored));
+            Assert.IsFalse(File.Exists(Path.Combine(_directory, "profile.json.tmp")),
+                "failed-save cleanup must remove the stale temp file");
+        }
+
+        [Test]
+        public void FirstEverSave_UnderInjectedFailure_FabricatesNoSaveMaterial()
+        {
+            var repository = CreateRepository(
+                new FaultInjectingSaveFileSystem { FailOperation = "copy" }, Log.Disabled);
+
+            Assert.AreEqual(SaveLoadResult.Failed, repository.Save(BuildPopulatedProfile(out _)));
+
+            bool loaded = repository.TryLoad(out _, out var result);
+            Assert.IsFalse(loaded);
+            Assert.AreEqual(SaveLoadResult.Empty, result);
+            Assert.IsFalse(repository.MainSaveExists());
+            Assert.IsFalse(repository.BackupExists());
+        }
+
         [Test]
         public void CorruptMainAndBackup_ReportsFailure_WithoutWipingEitherFile()
         {
@@ -378,8 +523,20 @@ namespace WalkGame.Tests
 
         private sealed class FaultInjectingSaveFileSystem : ISaveFileSystem
         {
+            /// <summary>Blanket failure for "write", "copy", or "move".</summary>
             public string FailOperation { get; set; }
+
+            /// <summary>Models a crash right after the trusted main slot was removed.</summary>
             public bool ThrowAfterDeletingMain { get; set; }
+
+            /// <summary>Fails only the temp->backup seeding copy (recovery-path protection).</summary>
+            public bool FailCopyFromTemp { get; set; }
+
+            /// <summary>Fails only the final temp->main placement move.</summary>
+            public bool FailMoveTempToMain { get; set; }
+
+            /// <summary>Fails only the corrupt-material quarantine move.</summary>
+            public bool FailQuarantineMove { get; set; }
 
             public void EnsureDirectory(string directory)
             {
@@ -404,6 +561,11 @@ namespace WalkGame.Tests
 
             public void Copy(string sourceFileName, string destFileName, bool overwrite)
             {
+                if (FailCopyFromTemp && sourceFileName.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new IOException("Injected temp-seed copy failure.");
+                }
+
                 ThrowIf("copy");
                 File.Copy(sourceFileName, destFileName, overwrite);
             }
@@ -420,6 +582,16 @@ namespace WalkGame.Tests
 
             public void Move(string sourceFileName, string destFileName)
             {
+                if (FailMoveTempToMain && sourceFileName.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new IOException("Injected final-placement move failure.");
+                }
+
+                if (FailQuarantineMove && destFileName.EndsWith(".quarantined", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new IOException("Injected quarantine move failure.");
+                }
+
                 ThrowIf("move");
                 File.Move(sourceFileName, destFileName);
             }

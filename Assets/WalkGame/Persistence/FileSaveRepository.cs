@@ -9,12 +9,22 @@ namespace WalkGame.Persistence
     /// serialize -> validate round-trip -> write temp -> rotate backup -> replace main.
     /// Corruption of the main file falls back to the backup; a missing or dead backup
     /// is reported instead of silently wiping player progress (TECHNICAL_ARCHITECTURE 15).
+    ///
+    /// Rotation invariant (ADR 0007): at every injected interruption point, at least one
+    /// trustworthy copy of the last-known-good profile must survive. The pre-campaign
+    /// algorithm violated this after a backup recovery — it copied the corrupt main over
+    /// the trusted backup before placing the new save. Save() now reads back the main
+    /// slot first and rotates over it only when it is verifiably good; otherwise the
+    /// failed material is quarantined byte-for-byte and the validated payload becomes
+    /// the backup BEFORE the main slot is replaced.
     /// </summary>
     public sealed class FileSaveRepository : ISaveRepository
     {
         private readonly string _mainPath;
         private readonly string _backupPath;
         private readonly string _tempPath;
+        private readonly string _mainQuarantinePath;
+        private readonly string _backupQuarantinePath;
         private readonly ISaveSerializer _serializer;
         private readonly SaveMigrator _migrator;
         private readonly Log _log;
@@ -45,6 +55,8 @@ namespace WalkGame.Persistence
             _mainPath = Path.Combine(directory, fileName);
             _backupPath = _mainPath + ".bak";
             _tempPath = _mainPath + ".tmp";
+            _mainQuarantinePath = _mainPath + ".quarantined";
+            _backupQuarantinePath = _backupPath + ".quarantined";
         }
 
         public SaveLoadResult Save(PlayerProfile profile)
@@ -72,19 +84,42 @@ namespace WalkGame.Persistence
 
                 _fileSystem.WriteAllText(_tempPath, payload);
 
-                if (_fileSystem.Exists(_mainPath))
+                if (!_fileSystem.Exists(_mainPath))
                 {
-                    _fileSystem.Copy(_mainPath, _backupPath, overwrite: true);
-                    // Backup already holds last-known-good; safe to remove before move.
-                    _fileSystem.Delete(_mainPath);
-                }
-                else
-                {
-                    // First-ever save: the validated payload is itself the last known
-                    // good state, so seed the backup from it.
+                    // First-ever save: seed the backup from the validated payload BEFORE
+                    // moving temp into place so an interruption after seeding still leaves
+                    // one trusted copy.
                     _fileSystem.Copy(_tempPath, _backupPath, overwrite: true);
+                    _fileSystem.Move(_tempPath, _mainPath);
+                    return SaveLoadResult.Success;
                 }
 
+                var mainReadable = TryReadProfile(_mainPath, out _, out var mainFailure);
+                if (mainReadable)
+                {
+                    // Trusted main: classic rotation keeps the previous good state as
+                    // backup before the main slot is touched.
+                    _fileSystem.Copy(_mainPath, _backupPath, overwrite: true);
+                    _fileSystem.Delete(_mainPath);
+                    _fileSystem.Move(_tempPath, _mainPath);
+                    return SaveLoadResult.Success;
+                }
+
+                if (mainFailure == SaveLoadResult.IncompatibleSchema)
+                {
+                    // Forward-schema evidence must never be rewritten by an older build;
+                    // refuse instead of rotating over it (ADR 0007).
+                    _log.Error("Save refused: existing main save uses a newer schema.");
+                    TryCleanupTemp();
+                    return SaveLoadResult.Failed;
+                }
+
+                // Main exists but is corrupt/unreadable: the backup holds the only
+                // trusted bytes, so it must not be overwritten from main. Quarantine the
+                // failed material byte-for-byte, establish the NEW payload as backup
+                // first, and only then replace the main slot.
+                QuarantineFile(_mainPath, _mainQuarantinePath);
+                _fileSystem.Copy(_tempPath, _backupPath, overwrite: true);
                 _fileSystem.Move(_tempPath, _mainPath);
                 return SaveLoadResult.Success;
             }
@@ -110,12 +145,13 @@ namespace WalkGame.Persistence
 
             if (migrated == SaveLoadResult.IncompatibleSchema)
             {
-                // Never fall back to an older backup across schema boundaries blindly:
-                // migrations are sequential, so a backup at the same version is safe.
+                // A newer-schema main is forward evidence. Falling back to the backup is
+                // only safe when the application can be told not to durably mutate over
+                // that evidence, so this case reports its own result (ADR 0007).
                 if (TryReadProfile(_backupPath, out loaded, out migrated))
                 {
                     profile = loaded;
-                    result = SaveLoadResult.RecoveredFromBackup;
+                    result = SaveLoadResult.RecoveredFromBackupForwardSchema;
                     return true;
                 }
 
@@ -149,6 +185,30 @@ namespace WalkGame.Persistence
             SafeDelete(_mainPath);
             SafeDelete(_backupPath);
             SafeDelete(_tempPath);
+        }
+
+        public void QuarantineAll()
+        {
+            QuarantineFile(_mainPath, _mainQuarantinePath);
+            QuarantineFile(_backupPath, _backupQuarantinePath);
+            TryCleanupTemp();
+        }
+
+        /// <summary>Move a slot's bytes to its quarantine path, replacing any previous
+        /// generation; deterministic single-generation archival, never a silent wipe.</summary>
+        private void QuarantineFile(string sourcePath, string quarantinePath)
+        {
+            if (!_fileSystem.Exists(sourcePath))
+            {
+                return;
+            }
+
+            if (_fileSystem.Exists(quarantinePath))
+            {
+                _fileSystem.Delete(quarantinePath);
+            }
+
+            _fileSystem.Move(sourcePath, quarantinePath);
         }
 
         private bool TryReadProfile(string path, out PlayerProfile profile, out SaveLoadResult failure)

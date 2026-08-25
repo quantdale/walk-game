@@ -34,8 +34,10 @@ namespace WalkGame.App
         public void ProcessPassiveNow()
         {
             var host = GameHost.Current;
-            if (host == null)
+            if (host == null || host.PersistenceBlocked)
             {
+                // Blocked persistence health must not credit movement that cannot be
+                // durably committed; the recovery screen owns the session instead.
                 return;
             }
 
@@ -92,10 +94,11 @@ namespace WalkGame.App
                 var snapshot = readObservation.Value;
                 if (snapshot != null)
                 {
-                    // Domain credit + cursor advance mutate together; persist only after success.
+                    // Domain credit + cursor advance mutate together; commit only after
+                    // success - a failed write rolls the whole window back (ADR 0007).
                     host.Activity.ProcessPassiveSnapshot(snapshot);
                     host.Profile.activityState.providerCursor = null; // debug provider keeps no extra cursor
-                    host.Persist();
+                    host.CommitChanges();
                 }
             }
             finally
@@ -119,7 +122,7 @@ namespace WalkGame.App
         private IEnumerator CompleteSessionRoutine(SessionType type, long steps, double meters, double movingSeconds)
         {
             var host = GameHost.Current;
-            if (host == null || !(host.Provider is DebugActivityProvider debug))
+            if (host == null || host.PersistenceBlocked || !(host.Provider is DebugActivityProvider debug))
             {
                 yield break;
             }
@@ -179,7 +182,7 @@ namespace WalkGame.App
                 teleportJump: false);
 
             host.Activity.ProcessSessionResult(result, growthEligible: false);
-            host.Persist();
+            host.CommitChanges();
             ActivityProcessed?.Invoke();
         }
 
@@ -216,7 +219,7 @@ namespace WalkGame.App
             while (true)
             {
                 yield return wait;
-                if (GameHost.Current != null && Application.isFocused)
+                if (GameHost.Current != null && Application.isFocused && !GameHost.Current.PersistenceBlocked)
                 {
                     ProcessPassiveNow();
                 }

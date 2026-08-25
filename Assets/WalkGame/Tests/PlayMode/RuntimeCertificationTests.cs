@@ -253,6 +253,67 @@ namespace WalkGame.Tests.PlayMode
             Assert.Greater(host.Profile.vitalityBalance, vitalityBefore);
         }
 
+        [UnityTest]
+        public IEnumerator CorruptSaves_BootIntoFailClosedRecovery_LifecyclePreservesBytes()
+        {
+            string mainPath = Path.Combine(_testSaveDirectory, "walkgame.profile.json");
+            string backupPath = mainPath + ".bak";
+            File.WriteAllText(mainPath, "{ broken main bytes");
+            File.WriteAllText(backupPath, "{ broken backup bytes");
+            byte[] mainBefore = File.ReadAllBytes(mainPath);
+            byte[] backupBefore = File.ReadAllBytes(backupPath);
+
+            yield return LoadBootstrapAndWaitForHost(host => host != null && host.PersistenceBlocked);
+
+            var host = GameHost.Current;
+            Assert.IsNull(host.Profile, "blocked boot must not fabricate a playable profile");
+            Assert.IsNull(UnityEngine.Object.FindFirstObjectByType<AppFlowController>(),
+                "no playable rig may compose while persistence health is blocked");
+
+            // Acceptance gate 2: shutdown autosave must never overwrite preserved bytes.
+            UnityEngine.Object.Destroy(host.gameObject);
+            yield return WaitForHostToClear();
+            CollectionAssert.AreEqual(mainBefore, File.ReadAllBytes(mainPath), "main slot untouched");
+            CollectionAssert.AreEqual(backupBefore, File.ReadAllBytes(backupPath), "backup slot untouched");
+        }
+
+        [UnityTest]
+        public IEnumerator BlockedBoot_StartOver_QuarantinesEvidence_AndRecomposesPlayableRuntime()
+        {
+            string mainPath = Path.Combine(_testSaveDirectory, "walkgame.profile.json");
+            string backupPath = mainPath + ".bak";
+            File.WriteAllText(mainPath, "{ broken main bytes");
+            File.WriteAllText(backupPath, "{ broken backup bytes");
+
+            yield return LoadBootstrapAndWaitForHost(host => host != null && host.PersistenceBlocked);
+            var host = GameHost.Current;
+
+            Assert.IsTrue(host.StartOverWithFreshProfile());
+            Assert.IsNotNull(host.Profile, "explicit start-over creates a genuinely fresh profile");
+            Assert.IsFalse(host.PersistenceBlocked);
+            Assert.AreEqual(PersistenceHealth.Fresh, host.Health);
+
+            // Destructive recovery quarantines instead of deleting (acceptance gate 3).
+            Assert.IsTrue(File.Exists(mainPath + ".quarantined"), "main evidence preserved");
+            Assert.IsTrue(File.Exists(backupPath + ".quarantined"), "backup evidence preserved");
+            StringAssert.StartsWith("{ broken", File.ReadAllText(mainPath + ".quarantined"));
+
+            // The playable runtime must come back composed for the fresh profile.
+            for (int frame = 0; frame < 180; frame++)
+            {
+                if (UnityEngine.Object.FindFirstObjectByType<AppFlowController>() != null &&
+                    host.Modes != null && host.Modes.Current == GameMode.BuilderMode)
+                {
+                    break;
+                }
+
+                yield return null;
+            }
+
+            Assert.IsNotNull(UnityEngine.Object.FindFirstObjectByType<AppFlowController>(),
+                "fresh session recomposes the playable runtime");
+        }
+
         private IEnumerator LoadBootstrapAndWaitForRig()
         {
             var operation = SceneManager.LoadSceneAsync("Assets/WalkGame/Core/Bootstrap.unity", LoadSceneMode.Single);
@@ -275,6 +336,28 @@ namespace WalkGame.Tests.PlayMode
             }
 
             Assert.Fail("Bootstrap did not compose GameHost, AppFlow, and the Builder rig within 180 frames.");
+        }
+
+        private IEnumerator LoadBootstrapAndWaitForHost(System.Func<GameHost, bool> ready)
+        {
+            var operation = SceneManager.LoadSceneAsync("Assets/WalkGame/Core/Bootstrap.unity", LoadSceneMode.Single);
+            Assert.IsNotNull(operation);
+            while (!operation.isDone)
+            {
+                yield return null;
+            }
+
+            for (int frame = 0; frame < 180; frame++)
+            {
+                if (ready(GameHost.Current))
+                {
+                    yield break;
+                }
+
+                yield return null;
+            }
+
+            Assert.Fail("Bootstrap did not reach the expected host state within 180 frames.");
         }
 
         private IEnumerator WaitForHostToClear()

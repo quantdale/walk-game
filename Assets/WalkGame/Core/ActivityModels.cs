@@ -131,7 +131,7 @@ namespace WalkGame.Core
     /// Call <see cref="Rebuild"/> after external assignment (load path) to restore the
     /// membership index.
     /// </summary>
-    public sealed class CreditedActivityKeys
+    public sealed class CreditedActivityKeys : IPostCopyRepair
     {
         private const int DefaultCapacity = 512;
 
@@ -182,6 +182,12 @@ namespace WalkGame.Core
                 entries.RemoveAt(0);
                 _set.Remove(oldest);
             }
+        }
+
+        /// <summary>In-place state-copy hook (rollback/cloud merge); same contract as Rebuild.</summary>
+        void IPostCopyRepair.Repair()
+        {
+            Rebuild();
         }
 
         public bool Contains(string key)
