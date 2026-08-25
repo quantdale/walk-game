@@ -300,14 +300,18 @@ IDs must not change after shipping unless a save migration maps old → new.
 
 ## 14. Save versioning
 
-Every save must include:
+Every save payload carries:
 
 ```text
 schemaVersion
-appVersion
-createdAtUtc
-lastSavedAtUtc
 ```
+
+`schemaVersion` is the only contract field: it gates forward-schema refusal and
+migration (see below). The serialized profile itself is the canonical document —
+identity/metadata fields such as app version or creation timestamps are not part
+of the current v1 schema (see `DATA_MODEL.md §2` for the authoritative field
+list); adding one is a schema change requiring migration, tests, and a copier
+extension per ADR 0007.
 
 On load:
 

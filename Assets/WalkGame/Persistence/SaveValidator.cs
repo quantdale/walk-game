@@ -37,6 +37,10 @@ namespace WalkGame.Persistence
             profile.resources = profile.resources ?? new System.Collections.Generic.Dictionary<string, long>();
             profile.recentVitalityTransactions = profile.recentVitalityTransactions ?? new System.Collections.Generic.List<VitalityTransaction>();
             profile.achievementState = profile.achievementState ?? new AchievementState();
+            // An explicit null list deserialized from JSON must be repaired here or the
+            // next milestone award (and any failed-commit rollback copy) dereferences it.
+            profile.achievementState.reachedMilestoneIds =
+                profile.achievementState.reachedMilestoneIds ?? new System.Collections.Generic.HashSet<string>();
             profile.settings = profile.settings ?? new PlayerSettings();
             world.unlockedRegionIds = world.unlockedRegionIds ?? new System.Collections.Generic.HashSet<string>();
             world.regionStates = world.regionStates ?? new System.Collections.Generic.Dictionary<string, RegionState>();
@@ -60,6 +64,14 @@ namespace WalkGame.Persistence
             if (profile.lifetimeAcceptedSteps < 0)
             {
                 profile.lifetimeAcceptedSteps = 0;
+            }
+
+            // Same corruption family as the step counter: a negative lifetime distance
+            // would silently poison bounded run-bonus math downstream.
+            if (profile.lifetimeVerifiedDistanceMeters < 0)
+            {
+                log.Warning("Negative lifetime distance clamped to zero.");
+                profile.lifetimeVerifiedDistanceMeters = 0;
             }
 
             profile.settings.masterAudioVolume = Clamp01(profile.settings.masterAudioVolume, 1f);
@@ -139,6 +151,32 @@ namespace WalkGame.Persistence
                 {
                     log.Warning($"Future restoration timestamp on '{building.instanceId}' flagged.");
                     report.FutureRestorationTimestampCount++;
+                }
+            }
+
+            // Producer entries mirror the building rules: prune malformed/null entries
+            // and clamp impossible values so accrual math never sees poisoned inputs.
+            foreach (var producerPair in new System.Collections.Generic.Dictionary<string, ProducerState>(region.producerStates))
+            {
+                var producer = producerPair.Value;
+                if (producer == null || string.IsNullOrEmpty(producer.producerId) ||
+                    producer.producerId != producerPair.Key)
+                {
+                    log.Warning($"Pruning malformed producer entry '{producerPair.Key}'.");
+                    region.producerStates.Remove(producerPair.Key);
+                    continue;
+                }
+
+                if (producer.storedOutput < 0)
+                {
+                    log.Warning($"Negative stored output on '{producer.producerId}' clamped to zero.");
+                    producer.storedOutput = 0;
+                }
+
+                if (producer.lastCheckpointUtc > clock.UtcNow.AddHours(1))
+                {
+                    log.Warning($"Future production checkpoint on '{producer.producerId}' reset to now.");
+                    producer.lastCheckpointUtc = clock.UtcNow;
                 }
             }
         }

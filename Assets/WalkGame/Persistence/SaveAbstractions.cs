@@ -56,7 +56,6 @@ namespace WalkGame.Persistence
         /// <summary>Diagnostics for tests/debug tooling.</summary>
         bool MainSaveExists();
         bool BackupExists();
-        void DeleteAll();
 
         /// <summary>
         /// Explicit destructive-recovery support (ADR 0007): move every save slot's

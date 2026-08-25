@@ -176,6 +176,52 @@ namespace WalkGame.Tests
         }
 
         [Test]
+        public void SaveValidator_RepairsNullMilestoneIdsAndNegativeLifetimeDistance()
+        {
+            // M8.2 audit: an explicit "reachedMilestoneIds": null deserialized from a
+            // hand-edited/partial save previously crashed the next milestone award and
+            // any failed-commit rollback copy; negative lifetime distance would poison
+            // bounded bonus math.
+            var profile = new PlayerProfile();
+            profile.achievementState.reachedMilestoneIds = null;
+            profile.lifetimeVerifiedDistanceMeters = -250.5;
+
+            SaveValidator.RepairAndValidate(profile, _clock, Log.Disabled);
+
+            Assert.IsNotNull(profile.achievementState.reachedMilestoneIds,
+                "milestone membership must be repaired before any consumer touches it");
+            Assert.DoesNotThrow(() => profile.achievementState.reachedMilestoneIds.Add("milestone.probe"));
+            Assert.AreEqual(0, profile.lifetimeVerifiedDistanceMeters);
+        }
+
+        [Test]
+        public void SaveValidator_PrunesMalformedProducerEntriesAndClampsImpossibleValues()
+        {
+            var region = _profile.worldState.GetOrCreateRegionState(AshfallBasinCatalog.RegionId);
+            region.producerStates["producer.ashfall.null_entry"] = null;
+            region.producerStates["producer.ashfall.mismatched"] = new ProducerState
+            {
+                producerId = "producer.ashfall.something_else",
+                buildingInstanceId = "building.ashfall.water_station",
+            };
+            region.producerStates["producer.ashfall.water_output"] = new ProducerState
+            {
+                producerId = "producer.ashfall.water_output",
+                buildingInstanceId = "building.ashfall.water_station",
+                storedOutput = -7,
+                lastCheckpointUtc = _clock.UtcNow.AddDays(30),
+            };
+
+            SaveValidator.RepairAndValidate(_profile, _clock, Log.Disabled);
+
+            Assert.IsFalse(region.producerStates.ContainsKey("producer.ashfall.null_entry"));
+            Assert.IsFalse(region.producerStates.ContainsKey("producer.ashfall.mismatched"));
+            var repaired = region.producerStates["producer.ashfall.water_output"];
+            Assert.AreEqual(0, repaired.storedOutput);
+            Assert.LessOrEqual(repaired.lastCheckpointUtc, _clock.UtcNow.AddHours(1));
+        }
+
+        [Test]
         public void EnsureProducerStates_PrunesUnknownPersistedProducerIds()
         {
             // M8 save red-team: hand-edited or partially migrated saves may reference

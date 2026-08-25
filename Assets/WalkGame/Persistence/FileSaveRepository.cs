@@ -180,12 +180,9 @@ namespace WalkGame.Persistence
             return _fileSystem.Exists(_backupPath);
         }
 
-        public void DeleteAll()
-        {
-            SafeDelete(_mainPath);
-            SafeDelete(_backupPath);
-            SafeDelete(_tempPath);
-        }
+        // DeleteAll was removed deliberately (M8.2): the repository's only sanctioned
+        // destructive path is QuarantineAll, which preserves evidence. A bulk delete
+        // API invited future callers to bypass quarantine semantics.
 
         public void QuarantineAll()
         {
@@ -264,21 +261,6 @@ namespace WalkGame.Persistence
             catch
             {
                 // Best-effort cleanup only.
-            }
-        }
-
-        private void SafeDelete(string path)
-        {
-            try
-            {
-                if (_fileSystem.Exists(path))
-                {
-                    _fileSystem.Delete(path);
-                }
-            }
-            catch (Exception ex)
-            {
-                _log.Warning($"Could not delete save slot ({ex.GetType().Name}).");
             }
         }
     }

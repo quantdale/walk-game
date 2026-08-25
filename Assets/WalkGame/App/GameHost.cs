@@ -63,6 +63,14 @@ namespace WalkGame.App
         /// <summary>Raised after a failed commit reverted canonical state to disk truth.</summary>
         public event Action PersistenceReverted;
 
+        /// <summary>
+        /// Raised after every resolved CommitChanges with its durability outcome so
+        /// presentation can flush success-only feedback it deferred during the mutation
+        /// (domain events fire before the commit is attempted) or drop it on failure.
+        /// Not raised on fatal loss: the blocked-mode recomposition replaces the UI.
+        /// </summary>
+        public event Action<bool> DurableCommitResolved;
+
         private ISaveRepository _repository;
         private PersistenceCoordinator _coordinator;
         private GameObject _flowGo;
@@ -378,10 +386,12 @@ namespace WalkGame.App
             {
                 case PersistenceCommitOutcome.Committed:
                     LastSaveResult = SaveLoadResult.Success;
+                    DurableCommitResolved?.Invoke(true);
                     return true;
                 case PersistenceCommitOutcome.RevertedToLastKnownGood:
                     LastSaveResult = SaveLoadResult.Failed;
                     PersistenceReverted?.Invoke();
+                    DurableCommitResolved?.Invoke(false);
                     return false;
                 default:
                     EnterBlockedState(_coordinator.LastFailure);

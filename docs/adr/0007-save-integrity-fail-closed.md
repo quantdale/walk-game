@@ -55,8 +55,10 @@ documented durability guarantees and application behavior:
   no longer destroy the last trusted copy.
 - Exactly-once activity semantics are strengthened: rollbacks restore cursors/dedup
   stores together with balances, keeping replay idempotent.
-- New save-slot artifacts (`.quarantined` files) appear next to existing saves;
-  `DeleteAll` remains the only full wipe and is debug-gated.
+- New save-slot artifacts (`.quarantined` files) appear next to existing saves.
+  Amendment (M8.2): the `DeleteAll` repository API was removed entirely rather than
+  debug-gated — quarantine is the only sanctioned destructive path, and a bulk
+  delete method invited future callers to bypass that semantics.
 - `ProfileStateCopier` must be extended alongside any DATA_MODEL model change; a
   serialized-graph fidelity test enforces this (`SaveIntegrityApplicationTests`).
 - EDITOR-tier behavior of the blocked boot/recovery UI is committed but remains

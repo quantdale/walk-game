@@ -30,6 +30,7 @@ namespace WalkGame.App
         private AudioSource _audioSource;
         private AudioSource _ambienceSource;
         private readonly Dictionary<FeedbackCue, AudioClip> _fallbackClips = new Dictionary<FeedbackCue, AudioClip>();
+        private readonly Queue<FeedbackCue> _pendingDurableCues = new Queue<FeedbackCue>();
 
         public void Bind(PlayerProfile profile)
         {
@@ -61,6 +62,33 @@ namespace WalkGame.App
                 Handheld.Vibrate();
             }
 #endif
+        }
+
+        /// <summary>
+        /// Celebration cues are raised by synchronous domain events DURING a mutation,
+        /// before the enclosing CommitChanges() proves durability. Durable-success cues
+        /// must be queued through here instead of played directly so a reverted or
+        /// failed commit can drop them; GameHost.DurableCommitResolved drives
+        /// <see cref="FlushQueuedDurable"/> / <see cref="DropQueuedDurable"/>.
+        /// </summary>
+        public void QueueDurable(FeedbackCue cue)
+        {
+            _pendingDurableCues.Enqueue(cue);
+        }
+
+        /// <summary>Commit succeeded: play everything the mutation raised.</summary>
+        public void FlushQueuedDurable()
+        {
+            while (_pendingDurableCues.Count > 0)
+            {
+                Play(_pendingDurableCues.Dequeue());
+            }
+        }
+
+        /// <summary>Commit failed/reverted: silently discard queued celebration cues.</summary>
+        public void DropQueuedDurable()
+        {
+            _pendingDurableCues.Clear();
         }
 
         public void ToggleHaptics()

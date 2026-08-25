@@ -184,8 +184,14 @@ namespace WalkGame.App
                 _dialogueMessage = discovered
                     ? $"{lore.Title}: {lore.Body}"
                     : $"{lore.Title}: already recorded";
+                if (discovered && !host.CommitChanges())
+                {
+                    // The discovery was rolled back with the failed write; the dialogue
+                    // must not present it as recorded (M8.2 feedback-truthfulness).
+                    _dialogueMessage = $"{lore.Title}: discovery could not be saved this session.";
+                }
+
                 _dialogueUntil = Time.unscaledTime + 8f;
-                host.CommitChanges();
                 _presenter.Refresh();
                 PresentationChanged?.Invoke();
             }
@@ -250,13 +256,18 @@ namespace WalkGame.App
 
             if (host.Placement.ConfirmMove(_previewPlacement, out _previewFailure))
             {
-                host.CommitChanges();
+                bool saved = host.CommitChanges();
                 _movingBuilding?.ClearPlacementPreview(host.Catalog.Ashfall,
                     host.Profile.worldState.GetOrCreateRegionState(host.Profile.worldState.currentRegionId).buildingStates[_movingBuilding.InstanceId]);
                 _presenter.Refresh();
                 _movingBuilding?.SetSelected(true);
                 _movingBuilding = null;
-                PlacementFeedback?.Invoke(PlacementFailure.None);
+                if (saved)
+                {
+                    // A failed commit reverted the move above; firing the confirm cue
+                    // would celebrate a placement that no longer exists.
+                    PlacementFeedback?.Invoke(PlacementFailure.None);
+                }
             }
             else
             {

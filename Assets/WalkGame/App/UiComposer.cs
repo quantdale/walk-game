@@ -165,6 +165,7 @@ namespace WalkGame.App
             host.Events.Subscribe<LoreDiscovered>(OnLoreDiscoveredCue);
             host.Events.Subscribe<ModeChanged>(OnModeChangedCue);
             host.PersistenceReverted += OnPersistenceReverted;
+            host.DurableCommitResolved += OnDurableCommitResolved;
             _flow.PlacementFeedback += OnPlacementFeedback;
 
             if (_ticker != null)
@@ -189,12 +190,29 @@ namespace WalkGame.App
         private void OnRegionStageChanged(RegionStageChanged _) => RefreshAll();
         private void OnEnvironmentFlagChanged(EnvironmentFlagChanged _) => RefreshAll();
         private void OnLoreDiscovered(LoreDiscovered _) => RefreshAll();
-        private void OnProjectCompletedRestorationCue(ProjectCompleted _) => _feedback.Play(FeedbackCue.Restoration);
-        private void OnVitalitySpentRestorationCue(VitalitySpent _) => _feedback.Play(FeedbackCue.Restoration);
-        private void OnRegionStageMilestoneCue(RegionStageChanged _) => _feedback.Play(FeedbackCue.Milestone);
-        private void OnActivityMilestoneCue(ActivityMilestoneReached _) => _feedback.Play(FeedbackCue.Milestone);
-        private void OnLoreDiscoveredCue(LoreDiscovered _) => _feedback.Play(FeedbackCue.Lore);
+
+        // Durable-success celebration cues are queued, not played immediately: the
+        // events fire inside the mutation, before its CommitChanges resolves. The
+        // commit outcome then flushes or drops them so a reverted action never
+        // celebrates (M8.2 feedback-truthfulness repair).
+        private void OnProjectCompletedRestorationCue(ProjectCompleted _) => _feedback.QueueDurable(FeedbackCue.Restoration);
+        private void OnVitalitySpentRestorationCue(VitalitySpent _) => _feedback.QueueDurable(FeedbackCue.Restoration);
+        private void OnRegionStageMilestoneCue(RegionStageChanged _) => _feedback.QueueDurable(FeedbackCue.Milestone);
+        private void OnActivityMilestoneCue(ActivityMilestoneReached _) => _feedback.QueueDurable(FeedbackCue.Milestone);
+        private void OnLoreDiscoveredCue(LoreDiscovered _) => _feedback.QueueDurable(FeedbackCue.Lore);
         private void OnModeChangedCue(ModeChanged _) => _feedback.Play(FeedbackCue.ModeSwitch);
+
+        private void OnDurableCommitResolved(bool committed)
+        {
+            if (committed)
+            {
+                _feedback.FlushQueuedDurable();
+            }
+            else
+            {
+                _feedback.DropQueuedDurable();
+            }
+        }
 
         private void OnDestroy()
         {
@@ -219,6 +237,7 @@ namespace WalkGame.App
             if (host != null)
             {
                 host.PersistenceReverted -= OnPersistenceReverted;
+                host.DurableCommitResolved -= OnDurableCommitResolved;
             }
 
             if (_flow != null)
@@ -514,14 +533,10 @@ namespace WalkGame.App
                 return string.Empty;
             }
 
-            var profile = host.Profile;
-            var region = profile.worldState.GetOrCreateRegionState(profile.worldState.currentRegionId);
-            int step = profile.settings.onboardingStep;
-            if (step < 2 && profile.lifetimeAcceptedSteps > 0) step = profile.settings.onboardingStep = 2;
-            if (step < 3 && region.completedProjectIds.Count > 0) step = profile.settings.onboardingStep = 3;
-            if (step < 4 && HasRestoredProducer(region)) step = profile.settings.onboardingStep = 4;
-            if (step < 5 && HasMovedBuilding(region)) step = profile.settings.onboardingStep = 5;
-            if (step < 6 && host.Modes.Current == GameMode.ExploreMode) step = profile.settings.onboardingStep = 6;
+            // Pure derivation: this getter runs on every HUD refresh, so it must not
+            // write canonical state as a side effect. Persisted advancement happens in
+            // AdvanceOnboarding/DismissOnboarding through CommitChanges (M8.2).
+            int step = DeriveOnboardingStep(host);
 
             switch (step)
             {
@@ -535,6 +550,24 @@ namespace WalkGame.App
             }
         }
 
+        /// <summary>
+        /// Onboarding progress derived from actual world facts; the persisted
+        /// settings.onboardingStep only ever advances durably through the explicit
+        /// advance/dismiss paths, never from a presentation read.
+        /// </summary>
+        private static int DeriveOnboardingStep(GameHost host)
+        {
+            var profile = host.Profile;
+            var region = profile.worldState.GetOrCreateRegionState(profile.worldState.currentRegionId);
+            int step = profile.settings.onboardingStep;
+            if (step < 2 && profile.lifetimeAcceptedSteps > 0) step = 2;
+            if (step < 3 && region.completedProjectIds.Count > 0) step = 3;
+            if (step < 4 && HasRestoredProducer(region)) step = 4;
+            if (step < 5 && HasMovedBuilding(region)) step = 5;
+            if (step < 6 && host.Modes.Current == GameMode.ExploreMode) step = 6;
+            return step;
+        }
+
         private void AdvanceOnboarding()
         {
             var host = GameHost.Current;
@@ -543,7 +576,10 @@ namespace WalkGame.App
                 return;
             }
 
-            host.Profile.settings.onboardingStep++;
+            // Advance one step beyond what is currently displayed (derived), so a
+            // tap can never regress the card relative to real world progress.
+            host.Profile.settings.onboardingStep = Math.Max(
+                host.Profile.settings.onboardingStep, DeriveOnboardingStep(host)) + 1;
             if (host.Profile.settings.onboardingStep >= 6)
             {
                 host.Profile.settings.onboardingCompleted = true;
@@ -583,7 +619,7 @@ namespace WalkGame.App
 
         private void FinishExpedition()
         {
-            _feedback.Play(FeedbackCue.ExpeditionFinish);
+            _feedback.QueueDurable(FeedbackCue.ExpeditionFinish);
             _expedition.FinishExpedition();
         }
 
@@ -859,6 +895,14 @@ namespace WalkGame.App
                 state.placement.gridY = instance.initialPlacement.gridY;
                 state.placement.rotationQuarterTurns = instance.initialPlacement.rotationQuarterTurns;
                 state.placement.placementVersion++;
+            }
+
+            // Debug resets are durable mutations too: contain them in the same
+            // transactional boundary so a failed write reverts the wipe.
+            if (!host.CommitChanges())
+            {
+                RefreshAll();
+                return;
             }
 
             _flow.Presenter?.Refresh();
