@@ -12,13 +12,13 @@ Evidence tiers:
 - **DEVICE** — requires physical/emulated mobile hardware.
 - **UNVERIFIED** — claimed by no evidence yet.
 
-Last updated: 2026-08-25 (M8.3 movement-delivery durability & activity write discipline campaign)
+Last updated: 2026-08-26 (M8.4 runtime orchestration durability & headless certification campaign)
 
 ## Verification status
 
-- Domain test suite: **165/165 passing (AUTOMATED)** via
+- Domain test suite: **185/185 passing (AUTOMATED)** via
   `dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj`
-  (`scripts/verify-domain.ps1`; also runs in CI on every push/PR to `main`).
+  (`scripts/verify-domain.ps1`; also runs in CI on every push/PR to `main`). M8.4 added 20 headless scenarios (165 → 185).
 - CI domain gate: configured (`.github/workflows/domain-tests.yml`) now including the
   release-hygiene/privacy audit — **AUTOMATED**.
 - Unity `6000.3.4f1` is installed at `C:\UnityEditors\6000.3.4f1\Editor`, its executable
@@ -38,10 +38,10 @@ Last updated: 2026-08-25 (M8.3 movement-delivery durability & activity write dis
   Android build/install/launch and native lifecycle evidence remain **UNVERIFIED**;
   `scripts/verify-android-smoke.ps1` is committed and ready for the first emulator/device.
   iOS Xcode generation/build remains **UNVERIFIED** (no macOS/Xcode).
-- Static bring-up audit of assemblies/GUIDs/scenes/packages: **AUTOMATED**; 99 asset files
-  and 99 `.meta` files pass the audit with zero missing real GUID references. The only unresolved
+- Static bring-up audit of assemblies/GUIDs/scenes/packages: **AUTOMATED**; 102 asset files
+  and 102 `.meta` files pass the audit with zero missing real GUID references. The only unresolved
   scene GUID is Unity's built-in zero GUID for the authored light. (Counts refreshed by the
-  M8.2 campaign; the pre-M8.1 record cited 94/94.)
+  M8.4 campaign; the pre-M8.1 record cited 94/94.)
 
 ## Phase 0 - Foundation
 
@@ -384,3 +384,58 @@ Start SHA `8d1f9c7250c0ac72b59dc3b8958ffeef94bf6a5d` (planner handoff at
 - A fatal (non-revertible) persistence loss still tears down all services per
   ADR 0007; movement observed inside such a window is unrecoverable and that
   tier remains fail-closed rather than synthesized.
+
+## M8.4 campaign — runtime orchestration durability & headless certification (ADR 0010)
+
+**Scope:** the application orchestration half left deliberately outside the M8.3 headless gate:
+`ActivityTicker`, `ExpeditionController`, `GameHost` lifecycle/persistence glue, and the
+transaction ordering that determines what happens after provider completion, domain mutation,
+commit success/failure, rollback, and provider resolution. PlayMode coverage exists but stays
+UNVERIFIED without a licensed editor; the commit-to-resolution ordering had no headless proof.
+
+Start SHA `e128a46f2929d8e54e639a66aeba1b77d2553347` (M8.4 planner handoff reconciled from
+`main@c7d18f766438eb50fbb3854d88a9972fdbc5dc32`), branch
+`agent/walk-game/m8.4-exec-20260826`, single-writer lease `sess-m84-exec-20260826`.
+
+### Root cause — planner defect reproduced as predicted
+
+If an Expedition `activeSession` marker was previously persisted by lifecycle autosave
+(`GameHost.Persist()` on pause/focus during an active session), `ExpeditionController`
+cleared it in memory before `ProcessSessionResult` → `CommitChanges()`. A failed commit
+reverted the profile via `ProfileStateCopier` and restored the durable marker, then
+`ResolveSessionCompletion(sessionId, false)` returned base steps to the passive stream where
+`ActivityService.ProcessPassiveSnapshot()` suppressed them as `SuppressedBySession`. The same
+defect applied to fault/cancel/null stop paths (uncommitted abandonment) and to timeout/late
+passive preparation (stranded provider claim). Fatal commits NRE'd on the next provider line.
+
+### Fix (ADR 0010) — AUTOMATED
+
+| Change | Evidence |
+| --- | --- |
+| Engine-free `ActivityTransactionCoordinator` (`WalkGame.Activity`) | stateless policy `CompleteExpedition` / `DeliverPreparedPassive` / `RejectAbandonedPreparation`; owns trust evaluation, process→commit→resolve→repair ordering and fatal-loss divergence |
+| `GameHost.CommitChangesWithOutcome()` | three-way outcome (`Committed` / `RevertedToLastKnownGood` / `FatalPersistenceLoss`) with identical `PersistenceReverted` / `DurableCommitResolved` event semantics; existing `CommitChanges()` wraps it |
+| `WalkGame.Activity` → `WalkGame.Persistence` assembly reference | coordinator can see commit outcome without duplicating the enum |
+| `ExpeditionController.RunExpedition` rewrite | captures provider/activity before fatal teardown; delegates both result and no-result paths to coordinator; repairs resurrected marker in same process; truthful `StatusMessage` gating on `Committed` vs `Reverted` vs `Fatal` |
+| `ActivityTicker.ReconcileRoutine` rewrite | captures refs before fatal; timeout path drains late completion on the main thread and rejects unprocessed delivery (`durable=false`, cursor untouched) up to a 30 s hard cap; commit path delegates to coordinator; NRE on fatal fixed |
+| `ActivityTicker.CompleteSessionRoutine` (debug) | same coordinator path so the debug menu matches the real Expedition transaction |
+| Passive revert repair | `DeliverPreparedPassive` now also repairs a resurrected marker after `Reverted`, so an expedition-fail→passive-fail chain does not strand the next retry |
+| Regression coverage | `ApplicationOrchestrationTests` (17 scenarios: F1–F14 mandatory plus variants), extensions to `ActivityServiceTests`, `AndroidCounterReconciliationTests`, `SaveLoadTests`; all 185 headless tests pass |
+
+### M8.4 certification matrix
+
+| Gate | Result | Evidence |
+| --- | --- | --- |
+| Domain suite | PASS | **185/185** (`dotnet test` + `verify-domain.ps1`, this campaign; baseline was 165/165) |
+| Unity static audit | PASS | 102 assets/102 metas (`verify-unity-static.ps1`) |
+| Release hygiene / privacy audit | PASS | 61 runtime sources (`verify-release-hygiene.ps1`) — coordinator contains no sensor/GPS/save-path logging |
+| Agent guard suites | PASS (ps) | 24/24 ps tier; 12 sh-tier failures are the known WSL `bash.exe` path shadowing (see M8.3 matrix) |
+| Repository identity (live) | PASS | `Assert-RepoIdentity.ps1` / `assert-repo-identity.sh` exit 0 pre- and post-work |
+| `git diff --check` | PASS | clean at final gate run |
+| Unity EditMode/PlayMode | UNVERIFIED | licensed editor still blocked by account-level licensing (repro: sign in, activate, `scripts/verify-unity-editmode.ps1`); new PlayMode timing paths remain UNVERIFIED by construction |
+| Android/iOS device tiers | UNVERIFIED | unchanged environment blockers; provider code paths compile under platform guards only |
+
+### Deliberate remaining limitations
+
+- Provider claim/restoration state stays in-memory by design (see ADR 0009); crash recovery derives from persisted cursors plus native absolute/history facts. A provider task that never completes after the 30 s hard cap may leave a claim open until restart — the only unbounded wait; providers that hang forever are provider bugs.
+- Fatal persistence loss remains fail-closed per ADR 0007; movement observed inside a fatal window is unrecoverable and no bonus is synthesized.
+- Scene composition (`AppFlowController`, `Builder`/`Explore` rig, `UiComposer`) and provider JNI / CoreMotion callbacks remain UNVERIFIED without an editor/device.

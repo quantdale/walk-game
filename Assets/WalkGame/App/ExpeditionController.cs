@@ -3,6 +3,7 @@ using System.Collections;
 using UnityEngine;
 using WalkGame.Activity;
 using WalkGame.Core;
+using WalkGame.Persistence;
 
 namespace WalkGame.App
 {
@@ -142,37 +143,53 @@ namespace WalkGame.App
 
             IsActive = false;
             IsBusy = false;
-            host.Activity.AbandonExpedition();
+
+            // Capture provider/activity before a potential fatal commit tears down the host (ADR 0010).
+            var provider = host.Provider;
+            var activity = host.Activity;
 
             if (stopObservation.IsFaulted || stopObservation.IsCanceled || stopObservation.Value == null)
             {
-                StatusMessage = "Expedition ended without a result; your passive steps remain safe.";
+                // No usable provider result: durably close the canonical marker through the
+                // transaction coordinator so a later revert cannot resurrect it and suppress
+                // the provider's returned base movement (M8.4 B).
+                var emptyReport = ActivityTransactionCoordinator.CompleteExpedition(
+                    activity,
+                    provider,
+                    null,
+                    () => host.CommitChangesWithOutcome());
+                StatusMessage = emptyReport.isFatal
+                    ? "Expedition ended without a durable save; recovery mode is active"
+                    : "Expedition ended without a result; your passive steps remain safe.";
                 Changed?.Invoke();
                 yield break;
             }
 
             var result = stopObservation.Value;
-            var trust = new TrustEvaluator(RewardPolicy.Default);
-            result.trustScore = trust.EvaluateSession(
-                new ActiveSessionState
-                {
-                    accumulatedSteps = result.acceptedSteps,
-                    accumulatedDistanceMeters = result.verifiedDistanceMeters,
-                    movingSeconds = result.verifiedMovingSeconds,
-                },
-                hasLocationEvidence: false,
-                mockLocationSuspected: false,
-                teleportJump: false);
-            LastResult = host.Activity.ProcessSessionResult(result, growthEligible: false);
+            // ADR 0010: the transaction coordinator owns the full ordering (trust evaluation,
+            // domain credit, commit, provider resolution, and post-rollback marker repair) so
+            // the same-process resurrection defect cannot recur and the headless suite certifies
+            // the real Unity sequence. A failed commit reverts the session reward in place;
+            // the Changed refresh presents the reverted (truthful) state instead of a phantom win.
+            var report = ActivityTransactionCoordinator.CompleteExpedition(
+                activity,
+                provider,
+                result,
+                () => host.CommitChangesWithOutcome(),
+                growthEligible: false);
+            LastResult = report.processedResult;
             LastRewardMessage = BuildRewardMessage(LastResult);
-            // A failed commit reverts the session reward in place; the Changed refresh
-            // below then presents the reverted (truthful) state instead of a phantom win.
-            bool durable = host.CommitChanges();
-            // ADR 0009: resolve the provider's held session movement against the proven
-            // durability outcome - a rejected save returns its base steps to the passive
-            // stream, so the Expedition's movement is retried instead of silently lost.
-            host.Provider.ResolveSessionCompletion(result.sessionId, durable);
-            StatusMessage = durable ? "Expedition complete" : "Expedition finished, but it could not be saved; your steps stay safe and will be credited once saving works again";
+            if (report.isFatal)
+            {
+                StatusMessage = "Expedition could not be saved and recovery is required; your world is safe";
+            }
+            else
+            {
+                bool durable = report.commitOutcome == PersistenceCommitOutcome.Committed;
+                StatusMessage = durable
+                    ? "Expedition complete"
+                    : "Expedition finished, but it could not be saved; your steps stay safe and will be credited once saving works again";
+            }
             Changed?.Invoke();
         }
 

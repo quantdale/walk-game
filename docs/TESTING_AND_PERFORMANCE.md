@@ -14,15 +14,20 @@ Testing must therefore prioritize:
 
 ## 1A. Current campaign evidence
 
-As of 2026-08-23 (M8 campaign), `dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj`
-passes **124/124** and `scripts/verify-unity-static.ps1` passes the pinned Unity version,
-asset metadata, package invariants, and Bootstrap scene checks. `scripts/verify-release-hygiene.ps1`
-adds a CI-runnable privacy/release audit (no GPS/save-path logging, Log-wrapper enforcement,
-minimal manifest). The new player-facing state surfaces are covered by `PlayerExperienceTests`,
-the exactly-once boundary by `ActivityServiceTests` + the M8 `InterruptedSessionRecoveryTests`
-(process-death recovery, late deliveries, save/reload), and pacing coherence by
-`AshfallEconomyPacingTests`. The existing activity, placement, save/recovery, production,
-permission, and full Ashfall playthrough suites remain part of the same automated gate.
+As of 2026-08-26 (M8.4 runtime orchestration durability, ADR 0010), `dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj`
+passes **185/185** and `scripts/verify-unity-static.ps1` passes the pinned Unity version,
+asset metadata, package invariants, and Bootstrap scene checks (102 assets/102 metas).
+`scripts/verify-release-hygiene.ps1` adds a CI-runnable privacy/release audit (no GPS/save-path
+logging, Log-wrapper enforcement, minimal manifest). Player-facing state is covered by
+`PlayerExperienceTests`, exactly-once by `ActivityServiceTests` + `InterruptedSessionRecoveryTests`
+(process-death, late deliveries, save/reload), pacing by `AshfallEconomyPacingTests`, and the
+**real application transaction protocol** by `MovementDeliveryDurabilityTests` plus the new
+`ApplicationOrchestrationTests` (17 headless scenarios: F1–F14 mandatory — persisted-marker
+success/failure/retry/duplicate/fatal, stop-null/fault, restart convergence, passive ack/reject
+suppressed/late-claim/blocked/duplicate, and durability-gated feedback truthfulness) through the
+engine-free `ActivityTransactionCoordinator`. The coordinator and `GameHost.CommitChangesWithOutcome()`
+are now the extracted, headlessly certified surface; ticker and Expedition timing, scene
+composition, and provider JNI / CoreMotion callbacks remain UNVERIFIED without an editor/device.
 
 The procedural environment kit uses shared materials, property blocks for state tinting,
 static geometry after construction, reused UI rows, and `Physics.OverlapSphereNonAlloc`

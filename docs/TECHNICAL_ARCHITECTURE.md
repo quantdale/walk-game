@@ -90,6 +90,18 @@ Never scatter `DateTime.UtcNow` directly across gameplay code.
 ### `ActivityService`
 Consumes one or more `IActivityProvider` implementations and produces normalized activity deltas.
 
+### `ActivityTransactionCoordinator` (ADR 0010)
+Engine-free orchestration of the activity transaction protocol. Unity sees `PreparePassiveDeliveryAsync` /
+`ResolvePreparedDelivery` / `ResolveSessionCompletion` as a two-phase commit, but the ordering
+— process → `CommitChangesWithOutcome()` → resolve → post-rollback marker repair — lives here so
+the headless suite certifies the real application sequence. `GameHost.CommitChangesWithOutcome()`
+exposes the three-way outcome (`Committed` / `RevertedToLastKnownGood` / `FatalPersistenceLoss`)
+with identical `PersistenceReverted` / `DurableCommitResolved` events; `ExpeditionController` and
+`ActivityTicker` are thin wiring that captures provider/activity refs before a fatal teardown and
+delegates both result and no-result paths to the coordinator. The 12-second ticker timeout drains
+late completions on the main thread and rejects unprocessed deliveries (`durable=false`, cursor
+untouched) up to a 30 s hard cap so a late `ClaimPending` cannot strand passive earning.
+
 ### `VitalityLedger`
 Only component allowed to credit/spend Vitality.
 

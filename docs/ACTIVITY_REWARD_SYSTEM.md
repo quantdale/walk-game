@@ -365,6 +365,18 @@ rebaselining never converts restored pending steps into huge, negative, or
 double rewards. Expedition completion holds the session's base steps until its
 commit resolves; rejection returns them to the passive stream.
 
+Orchestration durability (ADR 0010): a lifecycle autosave may durably persist
+the `activeSession` marker while an Expedition runs. If the completion commit
+then fails, the coordinator reverts the profile from disk (restoring that marker)
+and immediately repairs it in memory (`RecoverInterruptedSession`) after rejecting
+the provider completion, so the returned base movement is not suppressed in the
+same process. The repair converges durably on the next successful commit and
+remains reconstructible via boot recovery if the process dies first. The same
+repair applies after a passive `DurableMutation` revert that resurrects a stale
+marker, and no-result stop paths (`StopSessionAsync` fault/cancel/null) durably
+close the marker through the same transaction. Fatal persistence loss during
+completion or passive reconciliation fails closed and never fabricates reward.
+
 ## 17. iOS historical reconciliation
 
 Core Motion `CMPedometer` provides up to seven days of historical pedestrian data.

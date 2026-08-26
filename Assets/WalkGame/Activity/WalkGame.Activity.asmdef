@@ -2,7 +2,8 @@
     "name": "WalkGame.Activity",
     "rootNamespace": "WalkGame.Activity",
     "references": [
-        "WalkGame.Core"
+        "WalkGame.Core",
+        "WalkGame.Persistence"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

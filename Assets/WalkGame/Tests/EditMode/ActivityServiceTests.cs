@@ -346,5 +346,25 @@ namespace WalkGame.Tests
 
             Assert.AreEqual(0, movingSeconds);
         }
+
+        [Test]
+        public void M84_ResurrectedMarker_SuppressesUntilRecovered()
+        {
+            // Simulate a rollback-restored activeSession marker: a failed Expedition
+            // commit reverted the profile from durable state and resurrected the marker.
+            _profile.activityState.activeSession = new ActiveSessionState { sessionType = SessionType.Walk, startedAtUtc = _clock.UtcNow };
+            var suppressed = _activity.ProcessPassiveSnapshot(PassiveSnapshot(400));
+            Assert.AreEqual(PassiveReconciliationDisposition.SuppressedBySession, suppressed.disposition, "resurrected marker must suppress passive stream");
+            Assert.AreEqual(0, suppressed.acceptedSteps);
+            Assert.AreEqual(0, _ledger.GetBalance());
+
+            // Same-process repair (ADR 0010) clears the stale marker so the rejected
+            // provider movement can be retried without a process restart.
+            Assert.IsTrue(_activity.RecoverInterruptedSession());
+            var recovered = _activity.ProcessPassiveSnapshot(PassiveSnapshot(400));
+            Assert.AreEqual(PassiveReconciliationDisposition.DurableMutation, recovered.disposition);
+            Assert.AreEqual(400, recovered.acceptedSteps);
+            Assert.AreEqual(400, _ledger.GetBalance());
+        }
     }
 }

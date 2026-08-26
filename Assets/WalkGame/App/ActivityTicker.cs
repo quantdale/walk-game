@@ -3,6 +3,7 @@ using System.Collections;
 using UnityEngine;
 using WalkGame.Activity;
 using WalkGame.Core;
+using WalkGame.Persistence;
 using WalkGame.World;
 
 namespace WalkGame.App
@@ -64,16 +65,25 @@ namespace WalkGame.App
                 yield break;
             }
 
+            // Capture the provider/activity instances before a potential fatal commit
+            // tears them down (ADR 0010). The host object itself survives for logging.
+            var provider = host.Provider;
+            var activity = host.Activity;
+            if (provider == null || activity == null)
+            {
+                yield break;
+            }
+
             _reconcileInFlight = true;
             try
             {
                 var cursor = new ActivityCursor
                 {
-                    lastSuccessfulSyncUtc = host.Profile.activityState.lastSuccessfulSyncUtc,
-                    providerCursor = host.Profile.activityState.providerCursor,
+                    lastSuccessfulSyncUtc = host.Profile?.activityState?.lastSuccessfulSyncUtc,
+                    providerCursor = host.Profile?.activityState?.providerCursor,
                 };
 
-                var readTask = host.Provider.PreparePassiveDeliveryAsync(cursor);
+                var readTask = provider.PreparePassiveDeliveryAsync(cursor);
                 var readObservation = new TaskObservation<PreparedActivityDelivery>();
                 var readObserver = TaskObservation.Observe(readTask, readObservation);
                 float deadline = Time.realtimeSinceStartup + ReconcileTimeoutSeconds;
@@ -84,10 +94,37 @@ namespace WalkGame.App
 
                 if (!readObserver.IsCompleted)
                 {
-                    // Timeout counts as a failed query: fail closed without touching
-                    // durable state so the next successful window re-reads everything.
                     LastReconcileFailed = true;
-                    GameHost.Current.Log.Warning("Passive snapshot read timed out; cursor untouched.");
+                    host.Log.Warning("Passive snapshot read timed out; cursor untouched. Draining late provider delivery if it arrives...");
+                    // ADR 0010 / M8.4 D: a late-completing preparation would otherwise strand a
+                    // provider claim (e.g. Android single open claim) with no owner to resolve it.
+                    // Keep observing on the main thread and reject the unprocessed delivery so
+                    // the same movement remains retryable on the next cycle.
+                    float hardDeadline = Time.realtimeSinceStartup + 30f;
+                    while (!readObserver.IsCompleted && Time.realtimeSinceStartup < hardDeadline)
+                    {
+                        yield return null;
+                    }
+
+                    if (!readObserver.IsCompleted)
+                    {
+                        host.Log.Error("Passive provider task never completed after timeout; claim may remain open until process restart.");
+                        yield break;
+                    }
+
+                    if (readObservation.IsFaulted || readObservation.IsCanceled)
+                    {
+                        HandleFault(readObservation);
+                        yield break;
+                    }
+
+                    var latePrepared = readObservation.Value;
+                    if (latePrepared?.snapshot != null)
+                    {
+                        ActivityTransactionCoordinator.RejectAbandonedPreparation(provider, latePrepared);
+                        host.Log.Warning("Late passive delivery drained and rejected back to provider for retry.");
+                    }
+
                     yield break;
                 }
 
@@ -99,30 +136,26 @@ namespace WalkGame.App
                 var prepared = readObservation.Value;
                 if (prepared?.snapshot != null)
                 {
-                    // ADR 0009: the delivery is processed against the canonical profile,
-                    // then resolved exactly once against the proven durability outcome -
-                    // acknowledge after a committed save (or a duplicate whose durable
-                    // state already proves consumption), reject back to retryable pending
-                    // on suppression or a failed/rolled-back save.
-                    var outcome = host.Activity.ProcessPassiveSnapshot(prepared.snapshot);
-                    bool resolvedDurably;
-                    if (outcome.RequiresCommit)
+                    // ADR 0010: the transaction coordinator owns the full ordering
+                    // (process -> commit -> resolve) so the headless suite certifies
+                    // the real Unity sequence and fatal-loss convergence is safe.
+                    var report = ActivityTransactionCoordinator.DeliverPreparedPassive(
+                        activity,
+                        provider,
+                        prepared,
+                        () => host.CommitChangesWithOutcome());
+                    if (report.commitOutcome == PersistenceCommitOutcome.RevertedToLastKnownGood && !report.providerResolvedDurably)
                     {
-                        // Domain credit + cursor advance mutate together; commit only
-                        // after success - a failed write rolls the whole window back.
-                        resolvedDurably = host.CommitChanges();
-                        if (!resolvedDurably)
-                        {
-                            LastReconcileFailed = true;
-                            host.Log.Warning("Activity commit failed; passive movement returned to the provider for retry.");
-                        }
+                        LastReconcileFailed = true;
+                        host.Log.Warning("Activity commit failed; passive movement returned to the provider for retry.");
                     }
-                    else
+                    else if (report.isFatal)
                     {
-                        resolvedDurably = outcome.disposition != PassiveReconciliationDisposition.SuppressedBySession;
+                        LastReconcileFailed = true;
+                        host.Log.Error("Persistence fatal during passive reconciliation; entering blocked recovery.");
                     }
-
-                    host.Provider.ResolvePreparedDelivery(prepared, resolvedDurably);
+                    // Coordinator already resolved the provider; no further host.Provider
+                    // dereference here, so a fatal transition cannot NRE (M8.4 audit fix).
                 }
             }
             finally
@@ -181,33 +214,43 @@ namespace WalkGame.App
                 yield return null;
             }
 
+            // Capture activity before a potential fatal teardown (host survives for logging).
+            var activityForSession = host.Activity;
+
             if (!HandleFault(stopObservation))
             {
-                host.Activity.AbandonExpedition();
+                // Stop fault/cancel: durably close the marker through the coordinator
+                // so a later revert cannot resurrect it and suppress passive recovery.
+                ActivityTransactionCoordinator.CompleteExpedition(
+                    activityForSession,
+                    debug,
+                    null,
+                    () => host.CommitChangesWithOutcome());
+                ActivityProcessed?.Invoke();
                 yield break;
             }
 
             var result = stopObservation.Value;
             if (result == null)
             {
-                host.Activity.AbandonExpedition();
+                ActivityTransactionCoordinator.CompleteExpedition(
+                    activityForSession,
+                    debug,
+                    null,
+                    () => host.CommitChangesWithOutcome());
+                ActivityProcessed?.Invoke();
                 yield break;
             }
-            var trust = new TrustEvaluator(RewardPolicy.Default);
-            result.trustScore = trust.EvaluateSession(
-                new ActiveSessionState
-                {
-                    accumulatedSteps = result.acceptedSteps,
-                    accumulatedDistanceMeters = result.verifiedDistanceMeters,
-                    movingSeconds = result.verifiedMovingSeconds,
-                },
-                hasLocationEvidence: false,
-                mockLocationSuspected: false,
-                teleportJump: false);
 
-            host.Activity.ProcessSessionResult(result, growthEligible: false);
-            bool durable = host.CommitChanges();
-            debug.ResolveSessionCompletion(result.sessionId, durable);
+            // ADR 0010: coordinator owns trust evaluation, credit, commit, resolve,
+            // and post-rollback marker repair so this debug path matches the real
+            // ExpeditionController transaction and stays headlessly certifiable.
+            ActivityTransactionCoordinator.CompleteExpedition(
+                activityForSession,
+                debug,
+                result,
+                () => host.CommitChangesWithOutcome(),
+                growthEligible: false);
             ActivityProcessed?.Invoke();
         }
 

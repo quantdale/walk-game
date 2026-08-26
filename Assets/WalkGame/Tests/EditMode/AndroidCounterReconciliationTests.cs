@@ -278,5 +278,27 @@ namespace WalkGame.Tests
             Assert.Throws<ArgumentOutOfRangeException>(() => new AndroidCounterReconciler(0));
             Assert.Throws<ArgumentOutOfRangeException>(() => new AndroidCounterReconciler(-5));
         }
+
+        [Test]
+        public void M84_RejectedExpedition_RestoredSteps_RetryExactlyOnce_WithBaselineAhead()
+        {
+            // Simulate the debug/Android completion-hold lifecycle: passive pending is
+            // re-exposed after a rejected Expedition save via RestorePending.
+            _reconciler.Fold(1000);
+            _reconciler.Fold(1500); // +500 pending
+            // Expedition held 300 of those as its completion claim (simulated via separate budget).
+            // After a failed save that claim is restored to the passive stream.
+            _reconciler.RestorePending(300);
+            Assert.AreEqual(800, _reconciler.PendingDelta, "restored session steps plus uncredited passive window");
+
+            // Runtime baseline stays ahead of the rolled-back persisted cursor; folding
+            // from that baseline only credits increases, never duplicates the restored window.
+            Assert.AreEqual(800, _reconciler.ClaimPending());
+            _reconciler.RestoreClaim();
+            Assert.AreEqual(800, _reconciler.PendingDelta, "rejected passive claim returns the exact restored window");
+            Assert.AreEqual(800, _reconciler.ClaimPending());
+            _reconciler.AcknowledgeClaim();
+            Assert.AreEqual(0, _reconciler.PendingDelta, "acknowledged restored movement never replays");
+        }
     }
 }

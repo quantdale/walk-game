@@ -329,6 +329,17 @@ Implemented policy (campaign):
   credits nothing itself - movement made while the process was dead re-reads from the
   provider cursor through the normal passive stream - so a mid-Expedition kill costs
   the player neither lost steps nor double payment.
+- Orchestration repair (M8.4 / ADR 0010): the same stale-marker recovery is now also
+  applied in-process after a failed Expedition or passive `DurableMutation` commit that
+  reverts the profile and resurrects a durable `activeSession` marker. The
+  `ActivityTransactionCoordinator` rejects the provider delivery (`durable=false`) so
+  base movement returns to the passive stream, then clears the resurrected marker without
+  requiring a restart; the repair converges durably on the next successful commit and
+  remains reconstructible via boot recovery if the process dies before then. Late
+  `PreparePassiveDeliveryAsync` completions that arrive after the ticker's 12-second
+  deadline are drained on the main thread and rejected without processing (cursor
+  untouched) up to a 30 s hard cap so a late provider claim cannot strand passive
+  earning.
 
 ## 13. Clock and timezone handling
 

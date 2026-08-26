@@ -53,6 +53,23 @@ namespace WalkGame.Tests
         }
 
         [Test]
+        public void M84_ActiveSessionMarker_RoundTrips_AndSupportsBootRecovery()
+        {
+            var profile = new PlayerProfile();
+            profile.activityState.activeSession = new ActiveSessionState
+            {
+                sessionType = SessionType.Walk,
+                startedAtUtc = _clock.UtcNow,
+            };
+            var repository = CreateRepository();
+            Assert.AreEqual(SaveLoadResult.Success, repository.Save(profile));
+            Assert.IsTrue(repository.TryLoad(out var restored, out var result));
+            Assert.AreEqual(SaveLoadResult.Success, result);
+            Assert.IsNotNull(restored.activityState.activeSession, "marker must survive save/load for boot recovery");
+            Assert.AreEqual(SessionType.Walk, restored.activityState.activeSession.sessionType);
+        }
+
+        [Test]
         public void SaveThenLoad_PreservesCanonicalState()
         {
             var profile = BuildPopulatedProfile(out var expectedPlacement);

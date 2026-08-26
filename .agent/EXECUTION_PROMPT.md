@@ -1,6 +1,6 @@
 # Execution Prompt — M8.4 Runtime Orchestration Durability & Headless Certification
 
-**Status:** ACTIVE  
+**Status:** COMPLETE  
 **Planned-From:** `main@c7d18f766438eb50fbb3854d88a9972fdbc5dc32`  
 **Target branch:** `main`  
 **Campaign type:** non-hardware hardening / application-orchestration correctness / verification convergence  
@@ -373,3 +373,99 @@ At the end:
 6. Fetch, run the remote-advance guard, integrate safely to `main`, push without force, and release the writer lease on normal completion.
 
 Do not stop after patching the single visible failure path. The point of M8.4 is to make the **real application transaction protocol** as rigorous and executable as the M8.3 domain/provider contract, so a green headless suite actually means the movement durability sequence used by the game is safe.
+
+---
+
+## Executor Report — M8.4 COMPLETE
+
+**Branch:** `agent/walk-game/m8.4-exec-20260826`  
+**Start SHA:** `e128a46f2929d8e54e639a66aeba1b77d2553347` (planner handoff `main@c7d18f766438eb50fbb3854d88a9972fdbc5dc32` + M8.4 prompt)  
+**Final SHA:** see commit `feat(activity): M8.4 runtime orchestration durability & headless certification (ADR 0010)`  
+**Lease:** `sess-m84-exec-20260826` on `Nayeon_16`
+
+### Root cause — planner defect reproduced as predicted: YES
+
+The exact sequencing reproduced headlessly before the fix:
+
+1. `GameHost.Persist()` autosaved an `activeSession` marker while an Expedition ran (intended recoverable state; `Persist` is non-transactional by design, ADR 0007).
+2. `ExpeditionController.RunExpedition()` set `IsActive=false; AbandonExpedition(); ProcessSessionResult(); CommitChanges()` — the in-memory marker was cleared, the session was credited, then `CommitChanges()` failed.
+3. `PersistenceCoordinator.Commit()` reverted the live profile via `ProfileStateCopier.CopyActivityState()` from durable disk truth and restored the autosaved marker.
+4. `ResolveSessionCompletion(sessionId, false)` correctly returned base steps to the passive stream (Android `RestorePending` / debug counter restore).
+5. `ActivityService.ProcessPassiveSnapshot()` returned `SuppressedBySession` for the returned movement and for every subsequent passive pass — same-process stranding until boot recovery.
+
+The pre-fix `MovementDeliveryDurabilityTests` did not model this ordering (abandon before rollback was missing; rollback→abandon-before-retry was explicit in tests but not in the controller). The new `ApplicationOrchestrationTests.F2` reproduces the exact controller ordering and fails on the old code (suppressed retry), passes after the coordinator repair.
+
+Additional High defects of the same class were found and fixed:
+
+- **Fatal NRE (High):** `ExpeditionController:174` and `ActivityTicker:125` dereferenced `host.Provider` after a `CommitChanges()` that could have entered `EnterBlockedState()` (nulling `Provider`/`Activity`/`Profile`). Fixed by capturing refs before commit and letting the coordinator skip resolution on `FatalPersistenceLoss`.
+- **Ticker timeout stranding (High):** `ReconcileRoutine` exited on 12 s deadline without resolving the late-completing `PreparePassiveDeliveryAsync` task. An open Android `ClaimPending` / debug `_passiveClaim` then blocked all future preparations. Fixed by draining the late task on the main thread up to a 30 s hard cap and rejecting unprocessed deliveries (`durable=false`, cursor untouched).
+- **Stop-fault abandonment (Medium):** fault/cancel/null `StopSessionAsync` cleared the marker in memory but never committed or resolved; a later passive commit failure could resurrect it. Fixed by routing the no-result path through the coordinator (`AbandonExpedition` + `CommitChangesWithOutcome` + resurrection repair).
+- **Debug menu path (Medium):** `ActivityTicker.CompleteSessionRoutine` had the same ordering defect; now delegates to the coordinator.
+
+### Final application orchestration design (ADR 0010)
+
+Engine-free `ActivityTransactionCoordinator` (`Assets/WalkGame/Activity/ActivityTransactionCoordinator.cs`, `WalkGame.Activity` → `WalkGame.Persistence`):
+
+- `CompleteExpedition(activity, provider, result, commit, growthEligible)` — evaluates trust (`TrustEvaluator(RewardPolicy.Default)`), calls `ProcessSessionResult` or `AbandonExpedition` (null result), invokes `commit` (`GameHost.CommitChangesWithOutcome()`), then resolves: `Committed`→`ResolveSessionCompletion(true)`, `Reverted`→`ResolveSessionCompletion(false)` + `RecoverInterruptedSession()` if `HasInterruptedSession` (same-process repair, converges on next successful commit, boot-recoverable), `Fatal`→no provider touch.
+- `DeliverPreparedPassive(activity, provider, delivery, commit)` — same pattern for passive windows: `ProcessPassiveSnapshot` disposition drives `RequiresCommit`; non-committing paths resolve without a save (`Suppressed→false`, `DuplicateDurable→true`); `DurableMutation` commits then resolves, repairing any resurrected marker on `Reverted` and failing closed on `Fatal`.
+- `RejectAbandonedPreparation(provider, delivery)` — late/timeout drain helper: `ResolvePreparedDelivery(false)` without processing.
+
+`GameHost.CommitChangesWithOutcome()` exposes the three-way `PersistenceCommitOutcome` with identical `PersistenceReverted`/`DurableCommitResolved` event semantics; `CommitChanges()` wraps it. `ExpeditionController` and `ActivityTicker` capture provider/activity refs before commit, delegate both success and no-result paths to the coordinator, and gate `StatusMessage`/logging on `Committed`/`Reverted`/`Fatal`. The 30 s hard cap after the 12 s deadline is the only unbounded wait; overlapping reconciliations remain guarded by `_reconcileInFlight`.
+
+### Expedition success/failure/retry/crash semantics
+
+- **Success:** `ProcessSessionResult` marks `creditedSessionIds` and clears marker, `Committed` durably persists reward/marker/cursor, provider ack drops held base steps; exactly-once, never re-enters passive.
+- **Transient save failure:** `Reverted` reverts the whole profile (including dedup), provider reject returns base steps to passive stream, coordinator repairs resurrected marker in memory; same-process passive retry credits base steps exactly once on next successful commit (bonus not synthesized). Repeated failures retry safely without duplication.
+- **Duplicate session id:** harmless; `TryMarkCredited` prevents re-credit, `acceptedSteps` zeroed.
+- **No result (stop fault/cancel/null):** marker is durably closed via the coordinator; if that commit itself reverts, the same resurrection repair applies.
+- **Fatal loss:** `FatalPersistenceLoss` tears down `Profile`/`Activity`/`Provider`/`Ledger` etc. and recomposes the blocked recovery screen; no provider resolution, no fabricated reward, movement in that window is correctly unrecoverable (ADR 0007). Coordinator reports `isFatal` so callers never falsely celebrate.
+- **Process death:** lifecycle autosave (`Persist`) may leave a durable marker; boot `RecoverInterruptedSession()` clears it. A repair that has not yet converged durably is likewise recovered at next boot.
+
+### Passive timeout/late-completion semantics
+
+The 12 s deadline remains the "failed query" line (cursor untouched, fail-closed). After expiry the coroutine keeps observing the same task on the main thread:
+
+- faults/cancels → `HandleFault`, no delivery staged, cursor untouched;
+- late `PreparedActivityDelivery` → `RejectAbandonedPreparation` (`durable=false`) so staged claim returns to pending; the snapshot is never processed, dedup keys and `lastSuccessfulSyncUtc` are untouched, and the next cycle retries the identical window;
+- hard cap (30 s) without completion → error logged, claim may remain open until restart (the only unbounded wait; providers that never complete are provider bugs).
+
+Overlapping/focus-triggered reconciliations cannot resolve the wrong delivery (`_reconcileInFlight` guard, single open claim per provider — `ClaimPending` returns zero while a claim is open). No `.Result`/`.Wait()` blocking, no background continuation touching destroyed state.
+
+### Headless verification boundary change
+
+Before: `verification/WalkGame.Domain.Tests` compiled `Core`, `Building`, `Gameplay`, `Activity`, `Persistence`, `Content` and EditMode tests — 165 tests — but **not** `Assets/WalkGame/App`. The transaction ordering was PlayMode-only and UNVERIFIED.
+
+After: the three-way outcome, marker-repair, and drain-and-reject decisions live in the engine-free `ActivityTransactionCoordinator` (plus `GameHost.CommitChangesWithOutcome()` event fidelity). That surface is compiled by the existing glob and exercised by the new headless suite. Unity MonoBehaviours are now thin wiring; App-layer timing, scene composition, and provider JNI/CoreMotion callbacks remain UNVERIFIED without an editor/device but contain no hidden duplicate state machine.
+
+Compile-time linkage guard: `WalkGame.Activity` now references `WalkGame.Persistence` and the `CommitChangesWithOutcome` API; a drift that bypasses the coordinator would be caught by `ApplicationOrchestrationTests` or by the standing `verify-unity-static`/`verify-domain` gates.
+
+### Tests added/changed
+
+- **New:** `Assets/WalkGame/Tests/EditMode/ApplicationOrchestrationTests.cs` (17 scenarios):
+  F1 persisted-marker success; F2 persisted-marker failed-completion + same-process passive recovery; F3 two transient failures then success; F4 duplicate session harmless; F5 fatal loss fail-closed; F6/F6b stop-null with/without failing commit; F7 restart convergence after un-converged repair; F8 passive ack; F9 passive revert+retry; F10 suppressed retryable; F11 late/timeout drain + null-safety; F12 blocked while in-flight; F13 stale/duplicate resolutions; F14 durability-gated feedback truthfulness; plus trust-evaluation coverage.
+- **Extended:** `ActivityServiceTests` (+1 — `M84_ResurrectedMarker_SuppressesUntilRecovered`), `AndroidCounterReconciliationTests` (+1 — `M84_RejectedExpedition_RestoredSteps_RetryExactlyOnce_WithBaselineAhead`), `SaveLoadTests` (+1 — `M84_ActiveSessionMarker_RoundTrips_AndSupportsBootRecovery`) per the exactly-once rule.
+- **Totals:** 165 → **185/185** headless passing. Existing `MovementDeliveryDurabilityTests` (14) and `AndroidCounterReconciliationTests` claim tests remain green.
+
+### Exact validation results (this campaign)
+
+- `dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj` — **185/185 PASS** (1.0 s, VSTest 17.14.0, net8.0).
+- `scripts/verify-domain.ps1` — PASS (same suite, restore check).
+- `scripts/verify-unity-static.ps1` — PASS (102 assets / 102 metas, Unity 6000.3.4f1 pin, package invariants, Bootstrap scene).
+- `scripts/verify-release-hygiene.ps1` — PASS (62 runtime sources scanned, no GPS/save-path logging, no direct `Debug.Log`, manifest minimal).
+- `scripts/Test-AgentGuards.ps1` — ps tier **24/24 PASS**; 12 sh-tier failures are the known WSL `bash.exe` shadowing in this environment (see M8.3 matrix: `Git Bash ahead of WSL bash.exe` required for sh pass; ps tier is authoritative).
+- `scripts/assert-repo-identity.sh` — PASS (`quantdale/walk-game`).
+- `git diff --check` — clean.
+- Activity/persistence/interruption suites — all green (see 185 total).
+
+### Editor/device UNVERIFIED evidence
+
+- Unity 6000.3.4f1 installed at `C:\UnityEditors\6000.3.4f1\Editor`, reports pinned version, `UnityPackageManager.exe` present; Hub 3.21.0 MSIX holds zero accounts (`accounts.db` empty), licensing client: "Token not found in cache", 0 entitlement groups, no ULF — no offline activation without credentials. Repro: sign into Hub, activate, `scripts/setup-unity-project.ps1`, `scripts/verify-unity-editmode.ps1`, `scripts/verify-unity-playmode.ps1` → UNVERIFIED (prohibited to bypass).
+- Android Build Support absent (`AndroidPlayer` missing); prior Hub module install `ELEVATION_CANCELLED`. Repro: install Android Build Support + SDK/NDK, `scripts/verify-android-smoke.ps1` → UNVERIFIED.
+- iOS/macOS/Xcode absent → UNVERIFIED.
+- Hence `RuntimeCertificationTests` PlayMode scenarios (bootstrap, activity, stale Expedition recovery, blocked persistence, late completion timing) are committed but remain UNVERIFIED unless a licensed editor runs them — campaign not claimed via PlayMode.
+
+### Deferred follow-up (honest, deliberate)
+
+- **Provider tasks that never complete after the 30 s hard cap** may leave a claim open until restart. Bounded by the cap; hanging providers are provider bugs — no arbitrary `Task` cancellation injected. Future work could add explicit `CancellationToken` to `PreparePassiveDeliveryAsync` if a provider needs it, but that is not required for the current synchronous Android/debug and no-op iOS resolutions.
+- **Scene composition / provider JNI / CoreMotion / performance**: still PlayMode/device-only; no amount of headless hardening substitutes for a licensed editor run and physical-device lifecycle/thermal/battery measurement.
+- **Broad dirty-tracking / save batching**: not introduced — the audit proved the current per-mutation `CommitChanges` + lifecycle `Persist` convergence is sufficient with the repair semantics.

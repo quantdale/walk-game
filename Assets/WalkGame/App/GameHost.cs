@@ -367,6 +367,41 @@ namespace WalkGame.App
 
         /// <summary>
         /// Transactional persistence boundary for every durable gameplay mutation
+        /// (ADR 0007). Returns the full outcome so application transaction coordinators
+        /// can resolve provider deliveries exactly once against proven durability (ADR 0010).
+        /// Reverted state is fail-closed and still emits <see cref="PersistenceReverted"/> and
+        /// <see cref="DurableCommitResolved"/>(false); fatal loss tears down the runtime and
+        /// reports <see cref="PersistenceCommitOutcome.FatalPersistenceLoss"/> without those
+        /// commit-resolved events (the blocked recomposition replaces the UI). A blocked
+        /// host reports fatal so callers never falsely acknowledge a provider delivery.
+        /// </summary>
+        public PersistenceCommitOutcome CommitChangesWithOutcome()
+        {
+            if (PersistenceBlocked || Profile == null)
+            {
+                return PersistenceCommitOutcome.FatalPersistenceLoss;
+            }
+
+            var outcome = _coordinator.Commit(Profile);
+            switch (outcome)
+            {
+                case PersistenceCommitOutcome.Committed:
+                    LastSaveResult = SaveLoadResult.Success;
+                    DurableCommitResolved?.Invoke(true);
+                    return PersistenceCommitOutcome.Committed;
+                case PersistenceCommitOutcome.RevertedToLastKnownGood:
+                    LastSaveResult = SaveLoadResult.Failed;
+                    PersistenceReverted?.Invoke();
+                    DurableCommitResolved?.Invoke(false);
+                    return PersistenceCommitOutcome.RevertedToLastKnownGood;
+                default:
+                    EnterBlockedState(_coordinator.LastFailure);
+                    return PersistenceCommitOutcome.FatalPersistenceLoss;
+            }
+        }
+
+        /// <summary>
+        /// Transactional persistence boundary for every durable gameplay mutation
         /// (ADR 0007). Returns true only when the mutation is durably committed. On a
         /// write failure the coordinator reverts the live profile graph in place to the
         /// exact last-known-good disk state (or pristine state for never-saved
@@ -376,27 +411,7 @@ namespace WalkGame.App
         /// </summary>
         public bool CommitChanges()
         {
-            if (PersistenceBlocked || Profile == null)
-            {
-                return false;
-            }
-
-            var outcome = _coordinator.Commit(Profile);
-            switch (outcome)
-            {
-                case PersistenceCommitOutcome.Committed:
-                    LastSaveResult = SaveLoadResult.Success;
-                    DurableCommitResolved?.Invoke(true);
-                    return true;
-                case PersistenceCommitOutcome.RevertedToLastKnownGood:
-                    LastSaveResult = SaveLoadResult.Failed;
-                    PersistenceReverted?.Invoke();
-                    DurableCommitResolved?.Invoke(false);
-                    return false;
-                default:
-                    EnterBlockedState(_coordinator.LastFailure);
-                    return false;
-            }
+            return CommitChangesWithOutcome() == PersistenceCommitOutcome.Committed;
         }
 
         /// <summary>In-place retry of the blocked load (e.g. a transient file lock cleared).</summary>
