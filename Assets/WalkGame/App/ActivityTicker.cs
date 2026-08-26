@@ -23,6 +23,13 @@ namespace WalkGame.App
     ///  - prepared provider deliveries are resolved exactly once against the
     ///    durability outcome: acknowledged on committed/duplicate-durable passes,
     ///    rejected back to retryable pending on suppression or failed saves.
+    ///
+    /// M8.5 ownership contract (ADR 0011): the 12s reconcile deadline is scheduling
+    /// policy only. On expiry terminal ownership transfers atomically to a deterministic
+    /// cleanup owner that survives this coroutine, so a late-completing preparation can
+    /// NEVER strand a provider claim - it is rejected unprocessed whenever it arrives,
+    /// keeping the same movement retryable on a later cycle. There is no hard cutoff
+    /// after which a future completion becomes ownerless.
     /// All reward logic stays in the domain; this is pure scheduling glue.
     /// </summary>
     public sealed class ActivityTicker : MonoBehaviour
@@ -86,6 +93,7 @@ namespace WalkGame.App
                 var readTask = provider.PreparePassiveDeliveryAsync(cursor);
                 var readObservation = new TaskObservation<PreparedActivityDelivery>();
                 var readObserver = TaskObservation.Observe(readTask, readObservation);
+                var readLease = new OperationLease();
                 float deadline = Time.realtimeSinceStartup + ReconcileTimeoutSeconds;
                 while (!readObserver.IsCompleted && Time.realtimeSinceStartup < deadline)
                 {
@@ -95,40 +103,35 @@ namespace WalkGame.App
                 if (!readObserver.IsCompleted)
                 {
                     LastReconcileFailed = true;
-                    host.Log.Warning("Passive snapshot read timed out; cursor untouched. Draining late provider delivery if it arrives...");
-                    // ADR 0010 / M8.4 D: a late-completing preparation would otherwise strand a
-                    // provider claim (e.g. Android single open claim) with no owner to resolve it.
-                    // Keep observing on the main thread and reject the unprocessed delivery so
-                    // the same movement remains retryable on the next cycle.
-                    float hardDeadline = Time.realtimeSinceStartup + 30f;
-                    while (!readObserver.IsCompleted && Time.realtimeSinceStartup < hardDeadline)
+                    // M8.5 runtime-ownership D: the deadline is scheduling policy, not a
+                    // durability boundary. Transfer terminal ownership atomically to a
+                    // cleanup owner that OUTLIVES this coroutine: whichever completes
+                    // later wins exactly once. A late prepared delivery is rejected
+                    // unprocessed (durable=false) so the staged claim returns to retryable
+                    // pending, cursors stay untouched, and the next reconcile re-delivers
+                    // the identical window. No completion timing can strand a claim.
+                    if (ProviderOperations.AbandonPreparation(
+                            readTask,
+                            readLease,
+                            provider,
+                            ex => GameHost.Current?.Log.Error($"Late passive preparation faulted ({ex?.GetType().Name}).")))
                     {
-                        yield return null;
-                    }
-
-                    if (!readObserver.IsCompleted)
-                    {
-                        host.Log.Error("Passive provider task never completed after timeout; claim may remain open until process restart.");
+                        host.Log.Warning("Passive snapshot read timed out; ownership transferred to the cleanup owner; cursor untouched.");
                         yield break;
                     }
 
-                    if (readObservation.IsFaulted || readObservation.IsCanceled)
-                    {
-                        HandleFault(readObservation);
-                        yield break;
-                    }
-
-                    var latePrepared = readObservation.Value;
-                    if (latePrepared?.snapshot != null)
-                    {
-                        ActivityTransactionCoordinator.RejectAbandonedPreparation(provider, latePrepared);
-                        host.Log.Warning("Late passive delivery drained and rejected back to provider for retry.");
-                    }
-
-                    yield break;
+                    // Abandon lost an exact-boundary race with completion; fall through
+                    // and process the now-observed value under the normal protocol.
                 }
 
                 if (!HandleFault(readObservation))
+                {
+                    yield break;
+                }
+
+                // Exactly-one terminal owner: claim completion processing atomically so a
+                // concurrent abandonment can never also resolve the same delivery.
+                if (!readLease.TryAdopt())
                 {
                     yield break;
                 }
@@ -199,6 +202,11 @@ namespace WalkGame.App
 
             if (!host.Activity.BeginExpedition(type, host.Clock.UtcNow))
             {
+                // M8.5 start-adoption rule: the started debug session must not leak.
+                // Abort returns its simulated progress to the passive stream exactly once.
+                ActiveSessionAbort.Abort(debug,
+                    ex => host.Log?.Error($"Unadopted debug session abort failed ({ex?.GetType().Name})."));
+                ActivityProcessed?.Invoke();
                 yield break;
             }
 

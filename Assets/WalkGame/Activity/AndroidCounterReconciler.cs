@@ -38,6 +38,7 @@ namespace WalkGame.Activity
         private readonly long _maxPlausibleDelta;
         private double? _lastRaw;
         private long _claimedDelta;
+        private string _openClaimId;
 
         public AndroidCounterReconciler(long maxPlausibleDelta = DefaultMaxPlausibleDelta)
         {
@@ -57,6 +58,13 @@ namespace WalkGame.Activity
 
         /// <summary>True while a prepared delivery holds claimed steps (ADR 0009).</summary>
         public bool HasOpenClaim => _claimedDelta > 0;
+
+        /// <summary>
+        /// Identity of the single open claim, or null. Resolution MUST supply this
+        /// token (M8.5 runtime-ownership I4): stale, repeated, unknown, or null ids are
+        /// harmless no-ops and can never mutate a newer claim.
+        /// </summary>
+        public string OpenClaimId => _openClaimId;
 
         public bool HasBaseline => _lastRaw.HasValue;
 
@@ -130,7 +138,8 @@ namespace WalkGame.Activity
         /// Prepares a passive delivery (ADR 0009): moves all currently-pending steps
         /// into the open claim so exactly one delivery can hold them. Returns 0 when a
         /// claim is already open - overlapping reads can never prepare two claims over
-        /// one pending window. The steps stay recoverable until the claim is resolved.
+        /// one pending window. The steps stay recoverable until the claim is resolved
+        /// BY IDENTITY via <see cref="AcknowledgeClaim"/>/<see cref="RestoreClaim"/>.
         /// </summary>
         public long ClaimPending()
         {
@@ -141,27 +150,55 @@ namespace WalkGame.Activity
 
             long claimed = PendingDelta;
             PendingDelta = 0;
+            if (claimed <= 0)
+            {
+                return 0; // nothing to hold: no claim opens, identity stays null
+            }
+
             _claimedDelta = claimed;
+            _openClaimId = Guid.NewGuid().ToString("N");
             return claimed;
         }
 
-        /// <summary>Drops the open claim after a proven durable commit. Idempotent; an
-        /// absent claim is a safe no-op.</summary>
-        public void AcknowledgeClaim()
+        /// <summary>Drops the open claim after a proven durable commit. Resolves only the
+        /// NAMED current claim: an unknown/stale/repeated id is a no-op returning false.</summary>
+        public bool AcknowledgeClaim(string claimId)
         {
+            if (!MatchesOpenClaim(claimId))
+            {
+                return false;
+            }
+
             _claimedDelta = 0;
+            _openClaimId = null;
+            return true;
         }
 
-        /// <summary>Returns the open claim to the pending stream after a rejected/
+        /// <summary>Returns the NAMED open claim to the pending stream after a rejected/
         /// rolled-back delivery, making the same movement retryable exactly once in
-        /// this process. Idempotent; an absent claim is a safe no-op.</summary>
-        public void RestoreClaim()
+        /// this process. Unknown/stale/repeated ids are no-ops returning false.</summary>
+        public bool RestoreClaim(string claimId)
         {
+            if (!MatchesOpenClaim(claimId))
+            {
+                return false;
+            }
+
             if (_claimedDelta > 0)
             {
                 PendingDelta += _claimedDelta;
                 _claimedDelta = 0;
             }
+
+            _openClaimId = null;
+            return true;
+        }
+
+        private bool MatchesOpenClaim(string claimId)
+        {
+            return claimId != null &&
+                   _openClaimId != null &&
+                   string.Equals(_openClaimId, claimId, StringComparison.Ordinal);
         }
 
         /// <summary>Returns previously-undrained steps to the passive stream (campaign S8:

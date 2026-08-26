@@ -434,6 +434,11 @@ namespace WalkGame.App
                 return false;
             }
 
+            // M8.5 provider lifetime (ADR 0011): the old generation's native monitoring/
+            // live session is released BEFORE any service graph is rebuilt, so the new
+            // provider cannot inherit duplicate listeners or a leaked AlreadyRunning state.
+            ShutdownProvider();
+
             Health = recoveredHealth;
             LastSaveResult = result;
             Profile = profile;
@@ -462,6 +467,9 @@ namespace WalkGame.App
             _repository.QuarantineAll();
             Log.Warning("Player chose to start over; previous save material was quarantined.");
 
+            // Teardown-before-drop (ADR 0011): release the old provider generation first.
+            ShutdownProvider();
+
             Health = PersistenceHealth.Fresh;
             LastSaveResult = SaveLoadResult.Empty;
             Profile = NewProfile();
@@ -483,6 +491,12 @@ namespace WalkGame.App
 
             Health = PersistenceHealth.Blocked;
             LastSaveResult = reason;
+
+            // M8.5 provider lifetime (ADR 0011): shutdown runs BEFORE the graph is
+            // dropped so the provider still holds every reference it needs to release
+            // native state; it never acknowledges uncommitted movement as durable.
+            ShutdownProvider();
+
             Profile = null;
             Ledger = null;
             Rewards = null;
@@ -525,6 +539,25 @@ namespace WalkGame.App
             }
         }
 
+        /// <summary>
+        /// Explicit idempotent provider teardown (M8.5 ADR 0011). "Provider = null" is
+        /// never the teardown mechanism: every path that drops or rebuilds the service
+        /// graph calls this FIRST while the provider instance can still release its own
+        /// native monitoring/live-session state. Failures are logged and contained; they
+        /// never cause destructive save behavior and never fabricate reward state.
+        /// </summary>
+        private void ShutdownProvider()
+        {
+            try
+            {
+                Provider?.Shutdown();
+            }
+            catch (Exception ex)
+            {
+                Log?.Error($"Provider teardown failed ({ex.GetType().Name}); contained without save impact.");
+            }
+        }
+
         private void OnDestroy()
         {
             if (Current != this)
@@ -536,6 +569,10 @@ namespace WalkGame.App
             {
                 Persist();
             }
+
+            // Release native provider work last, after the final autosave decision:
+            // teardown must not influence what was durably written (ADR 0011).
+            ShutdownProvider();
             Current = null;
         }
 

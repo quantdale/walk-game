@@ -130,16 +130,17 @@ namespace WalkGame.Tests
             Assert.AreEqual(20, _reconciler.DrainPending());
         }
 
-        // ---- ADR 0009 prepared-delivery claim semantics ------------------------
+        // ---- ADR 0009 prepared-delivery claim semantics (identity-bound, M8.5) ---
 
         [Test]
-        public void ClaimPending_StagesMovement_WithoutDestroyingRetryability()
+        public void ClaimPending_StagesMovement_UnderAStableIdentityToken()
         {
             _reconciler.Fold(1000);
             _reconciler.Fold(1200);
 
             Assert.AreEqual(200, _reconciler.ClaimPending());
             Assert.IsTrue(_reconciler.HasOpenClaim);
+            Assert.IsNotNull(_reconciler.OpenClaimId, "the open claim carries an identity token");
             Assert.AreEqual(0, _reconciler.PendingDelta, "pending moved into the open claim");
 
             // Overlapping preparation cannot open a second claim over the same window.
@@ -148,37 +149,92 @@ namespace WalkGame.Tests
         }
 
         [Test]
-        public void AcknowledgeClaim_IsIdempotent_AndNeverRestores()
+        public void AcknowledgeClaim_IsIdentityBound_RepeatedAndStaleAreNoOps()
         {
             _reconciler.Fold(1000);
             _reconciler.Fold(1100);
             Assert.AreEqual(100, _reconciler.ClaimPending());
+            var claimA = _reconciler.OpenClaimId;
 
-            _reconciler.AcknowledgeClaim();
-            _reconciler.AcknowledgeClaim(); // repeated ack: safe no-op
-            _reconciler.RestoreClaim();     // late reject after ack: must not resurrect
+            Assert.IsTrue(_reconciler.AcknowledgeClaim(claimA));
+            Assert.IsFalse(_reconciler.AcknowledgeClaim(claimA), "repeated ack of a closed claim is a no-op");
+            Assert.IsFalse(_reconciler.RestoreClaim(claimA), "late reject after ack must not resurrect");
 
             Assert.IsFalse(_reconciler.HasOpenClaim);
+            Assert.IsNull(_reconciler.OpenClaimId);
             Assert.AreEqual(0, _reconciler.PendingDelta, "acknowledged movement never replays");
         }
 
         [Test]
-        public void RestoreClaim_IsIdempotent_AndNeverGoesNegative()
+        public void RestoreClaim_IsIdentityBound_AndNeverGoesNegative()
         {
             _reconciler.Fold(1000);
             _reconciler.Fold(1300);
             Assert.AreEqual(300, _reconciler.ClaimPending());
+            var claimA = _reconciler.OpenClaimId;
 
-            _reconciler.RestoreClaim();
-            _reconciler.RestoreClaim(); // repeated reject: still exactly 300
+            Assert.IsTrue(_reconciler.RestoreClaim(claimA));
+            Assert.IsFalse(_reconciler.RestoreClaim(claimA), "repeated reject restores nothing more");
 
             Assert.IsFalse(_reconciler.HasOpenClaim);
-            Assert.AreEqual(300, _reconciler.PendingDelta);
+            Assert.AreEqual(300, _reconciler.PendingDelta, "still exactly 300 after both rejects");
 
-            // The restored window is retryable exactly once.
+            // The restored window is retryable exactly once under a NEW claim id.
             Assert.AreEqual(300, _reconciler.ClaimPending());
-            _reconciler.RestoreClaim();
+            Assert.AreNotEqual(claimA, _reconciler.OpenClaimId, "a new claim gets a fresh identity");
+            Assert.IsTrue(_reconciler.RestoreClaim(_reconciler.OpenClaimId));
             Assert.AreEqual(300, _reconciler.PendingDelta);
+        }
+
+        [Test]
+        public void StaleOrUnknownOrNull_Resolution_CannotMutateANewerClaim()
+        {
+            // M8.5 H1 regression: claim A closed, claim B open; stale A resolutions must
+            // leave B untouched (pre-fix the reconciler mutated whichever claim was open).
+            _reconciler.Fold(1000);
+            _reconciler.Fold(1100); // +100
+            Assert.AreEqual(100, _reconciler.ClaimPending());
+            var claimA = _reconciler.OpenClaimId;
+            Assert.IsTrue(_reconciler.AcknowledgeClaim(claimA), "A closes durably");
+
+            _reconciler.Fold(1150); // +50 new pending
+            Assert.AreEqual(50, _reconciler.ClaimPending());
+            var claimB = _reconciler.OpenClaimId;
+            Assert.AreNotEqual(claimA, claimB);
+
+            Assert.IsFalse(_reconciler.AcknowledgeClaim(claimA), "stale durable ack must not drop B");
+            Assert.IsFalse(_reconciler.RestoreClaim(claimA), "stale reject must not restore into B's window");
+            Assert.IsFalse(_reconciler.AcknowledgeClaim("unknown-id"));
+            Assert.IsFalse(_reconciler.RestoreClaim("unknown-id"));
+            Assert.IsFalse(_reconciler.AcknowledgeClaim(null), "null ack is a no-op");
+            Assert.IsFalse(_reconciler.RestoreClaim(null), "null reject is a no-op");
+
+            // B survived unchanged and still resolves exactly once by its own identity.
+            Assert.IsTrue(_reconciler.HasOpenClaim);
+            Assert.AreEqual(0, _reconciler.PendingDelta, "no duplicate/early restoration of B's steps");
+            Assert.IsTrue(_reconciler.RestoreClaim(claimB));
+            Assert.AreEqual(50, _reconciler.PendingDelta);
+            Assert.AreEqual(50, _reconciler.ClaimPending());
+            Assert.IsTrue(_reconciler.AcknowledgeClaim(_reconciler.OpenClaimId));
+            Assert.AreEqual(0, _reconciler.PendingDelta);
+        }
+
+        [Test]
+        public void FailedCommitRetry_RejectionReplaysAreNoOps_MovementRetriesExactlyOnce()
+        {
+            _reconciler.Fold(2000);
+            _reconciler.Fold(2400); // +400
+            Assert.AreEqual(400, _reconciler.ClaimPending());
+            var claimA = _reconciler.OpenClaimId;
+
+            Assert.IsTrue(_reconciler.RestoreClaim(claimA), "commit reverted: movement returned");
+            Assert.AreEqual(400, _reconciler.PendingDelta);
+            Assert.IsFalse(_reconciler.RestoreClaim(claimA), "duplicate rejection cannot double-restore");
+            Assert.IsFalse(_reconciler.AcknowledgeClaim(claimA), "stale ack after rejection cannot consume it");
+
+            Assert.AreEqual(400, _reconciler.ClaimPending(), "the same movement retries under a new claim");
+            Assert.IsTrue(_reconciler.AcknowledgeClaim(_reconciler.OpenClaimId));
+            Assert.AreEqual(0, _reconciler.PendingDelta, "credited exactly once across both attempts");
         }
 
         [Test]
@@ -187,7 +243,7 @@ namespace WalkGame.Tests
             _reconciler.Fold(1000);
             _reconciler.Fold(1200);
             Assert.AreEqual(200, _reconciler.ClaimPending());
-            _reconciler.RestoreClaim(); // commit failed; steps returned for retry
+            _reconciler.RestoreClaim(_reconciler.OpenClaimId); // commit failed; steps returned for retry
 
             // Device reboots before the retry: rebaseline, but the uncredited 200
             // remain legitimately pending and are delivered once, never doubled.
@@ -197,7 +253,7 @@ namespace WalkGame.Tests
             _reconciler.Fold(80);
             Assert.AreEqual(250, _reconciler.PendingDelta);
             Assert.AreEqual(250, _reconciler.ClaimPending());
-            _reconciler.AcknowledgeClaim();
+            _reconciler.AcknowledgeClaim(_reconciler.OpenClaimId);
             Assert.AreEqual(0, _reconciler.PendingDelta);
         }
 
@@ -214,7 +270,7 @@ namespace WalkGame.Tests
                 "the uncommitted window is reconstructed from the durable cursor exactly once");
 
             Assert.AreEqual(250, restarted.ClaimPending());
-            restarted.AcknowledgeClaim(); // the retry's commit succeeds
+            restarted.AcknowledgeClaim(restarted.OpenClaimId); // the retry's commit succeeds
             restarted.Fold(1300);
             Assert.AreEqual(50, restarted.PendingDelta, "only genuinely new movement remains");
         }
@@ -294,10 +350,10 @@ namespace WalkGame.Tests
             // Runtime baseline stays ahead of the rolled-back persisted cursor; folding
             // from that baseline only credits increases, never duplicates the restored window.
             Assert.AreEqual(800, _reconciler.ClaimPending());
-            _reconciler.RestoreClaim();
+            _reconciler.RestoreClaim(_reconciler.OpenClaimId);
             Assert.AreEqual(800, _reconciler.PendingDelta, "rejected passive claim returns the exact restored window");
             Assert.AreEqual(800, _reconciler.ClaimPending());
-            _reconciler.AcknowledgeClaim();
+            _reconciler.AcknowledgeClaim(_reconciler.OpenClaimId);
             Assert.AreEqual(0, _reconciler.PendingDelta, "acknowledged restored movement never replays");
         }
     }

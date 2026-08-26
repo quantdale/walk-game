@@ -91,6 +91,16 @@ namespace WalkGame.App
             _pendingDurableCues.Clear();
         }
 
+        /// <summary>
+        /// Reapplies the canonical profile audio settings to live sources after a
+        /// persistence rollback, so audible runtime state matches durable truth instead of
+        /// an optimistically applied value that failed to save (M8.5 runtime-ownership).
+        /// </summary>
+        public void ReapplyCanonicalSettings()
+        {
+            ApplyAudioSettings();
+        }
+
         public void ToggleHaptics()
         {
             if (_profile?.settings == null) return;

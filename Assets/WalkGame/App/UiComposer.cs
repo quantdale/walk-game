@@ -26,6 +26,7 @@ namespace WalkGame.App
         private ExpeditionController _expedition;
         private FeedbackController _feedback;
         private MotionPermissionCoordinator _motionPermissions;
+        private DebugActivityProvider _ownedDebugSession;
         private bool _permissionRequestInFlight;
         private string _resumeProductionMessage = string.Empty;
         private string _saveHealthMessage = string.Empty;
@@ -59,7 +60,7 @@ namespace WalkGame.App
             _hud = hudGo.AddComponent<HudController>();
 
             _motionPermissions = new MotionPermissionCoordinator(host.Provider, host.Log);
-            _motionPermissions.StateChanged += _ => RefreshAll();
+            _motionPermissions.StateChanged += OnMotionPermissionStateChanged;
             StartCoroutine(RefreshMotionPermissionRoutine());
 
             _hud.Bind(new UiContext
@@ -175,6 +176,7 @@ namespace WalkGame.App
 
             _flow.PresentationChanged += RefreshAll;
             _expedition.Changed += RefreshAll;
+            _expedition.StartConfirmed += OnExpeditionStartConfirmed;
 
             RefreshAll();
         }
@@ -213,6 +215,14 @@ namespace WalkGame.App
                 _feedback.DropQueuedDurable();
             }
         }
+
+        /// <summary>Named detachable permission handler (M8.5 G): late native permission
+        /// completions fire only into live UI because OnDestroy removes this binding.</summary>
+        private void OnMotionPermissionStateChanged(ActivityPermissionState _) => RefreshAll();
+
+        /// <summary>Success cue only after REAL provider start + domain adoption - never
+        /// merely because the button was tapped (durability-gated player truth).</summary>
+        private void OnExpeditionStartConfirmed() => _feedback.Play(FeedbackCue.ExpeditionStart);
 
         private void OnDestroy()
         {
@@ -254,6 +264,21 @@ namespace WalkGame.App
             if (_expedition != null)
             {
                 _expedition.Changed -= RefreshAll;
+                _expedition.StartConfirmed -= OnExpeditionStartConfirmed;
+            }
+
+            if (_motionPermissions != null)
+            {
+                _motionPermissions.StateChanged -= OnMotionPermissionStateChanged;
+            }
+
+            // Runtime-generation safety (M8.5): a debug session owned by a dead routine
+            // must not leak; post-shutdown providers make this a benign no-op.
+            var owned = _ownedDebugSession;
+            if (owned != null)
+            {
+                ActiveSessionAbort.Abort(owned);
+                _ownedDebugSession = null;
             }
         }
 
@@ -275,67 +300,98 @@ namespace WalkGame.App
             }
         }
 
-        /// <summary>Debug-only vehicle Expedition through the async provider surface,
-        /// observed from a coroutine so the main thread never blocks on .Result.</summary>
+        /// <summary>
+        /// Debug-only vehicle Expedition through the SHARED transaction protocol (M8.5 F):
+        /// it may construct its own trust/suspicion facts, but completion, no-result, and
+        /// fault paths all delegate to <see cref="ActivityTransactionCoordinator"/>, so a
+        /// failed commit performs the same rollback-marker repair as a real Expedition.
+        /// </summary>
         private IEnumerator VehicleSessionRoutine()
         {
             var host = GameHost.Current;
-            if (!(host.Provider is DebugActivityProvider debug))
+            var debug = host?.Provider as DebugActivityProvider;
+            if (debug == null)
             {
                 yield break;
             }
 
+            _ownedDebugSession = debug;
+
             var startTask = debug.StartSessionAsync(SessionType.Walk);
             var startObservation = new TaskObservation<SessionStartError>();
             var startObserver = TaskObservation.Observe(startTask, startObservation);
-            while (!startObserver.IsCompleted)
+            float deadline = Time.realtimeSinceStartup + 10f;
+            while (!startObserver.IsCompleted && Time.realtimeSinceStartup < deadline)
             {
                 yield return null;
+            }
+
+            if (!startObserver.IsCompleted)
+            {
+                ProviderOperations.DiscardLateResult(startTask, new OperationLease());
+                _ownedDebugSession = null;
+                yield break;
             }
 
             if (startObservation.IsFaulted || startObservation.IsCanceled ||
                 startObservation.Value != SessionStartError.None)
             {
+                _ownedDebugSession = null;
                 yield break;
             }
 
             if (!host.Activity.BeginExpedition(SessionType.Walk, host.Clock.UtcNow))
             {
+                // Start-adoption rule: the started session is aborted, not leaked.
+                ActiveSessionAbort.Abort(debug);
+                _ownedDebugSession = null;
+                RefreshAll();
                 yield break;
             }
 
+            // Vehicle-like session must earn base steps but no bonus.
             debug.SimulateVehicleDrive(minutes: 30);
 
             var stopTask = debug.StopSessionAsync();
             var stopObservation = new TaskObservation<ActivitySessionResult>();
             var stopObserver = TaskObservation.Observe(stopTask, stopObservation);
-            while (!stopObserver.IsCompleted)
+            var stopLease = new OperationLease();
+            deadline = Time.realtimeSinceStartup + 30f;
+            while (!stopObserver.IsCompleted && Time.realtimeSinceStartup < deadline)
             {
                 yield return null;
             }
 
-            if (stopObservation.IsFaulted || stopObservation.IsCanceled)
+            _ownedDebugSession = null;
+            var activityForSession = host.Activity;
+
+            if (!stopObserver.IsCompleted)
             {
-                host.Activity.AbandonExpedition();
+                ProviderOperations.AbandonSessionStop(stopTask, stopLease, debug);
+                ActivityTransactionCoordinator.CompleteExpedition(
+                    activityForSession, debug, null, () => host.CommitChangesWithOutcome());
+                RefreshAll();
                 yield break;
             }
 
-            var result = stopObservation.Value;
-            if (result == null)
+            if (stopObservation.IsFaulted || stopObservation.IsCanceled || stopObservation.Value == null)
             {
-                host.Activity.AbandonExpedition();
+                // Shared durable close/repair - never an uncommitted AbandonExpedition.
+                ActivityTransactionCoordinator.CompleteExpedition(
+                    activityForSession, debug, null, () => host.CommitChangesWithOutcome());
+                RefreshAll();
                 yield break;
             }
-            var trust = new TrustEvaluator(RewardPolicy.Default);
-            result.trustScore = trust.EvaluateSession(new ActiveSessionState
-            {
-                accumulatedSteps = result.acceptedSteps,
-                accumulatedDistanceMeters = result.verifiedDistanceMeters,
-                movingSeconds = result.verifiedMovingSeconds,
-            }, true, false, false);
-            host.Activity.ProcessSessionResult(result, growthEligible: false);
-            bool durable = host.CommitChanges();
-            debug.ResolveSessionCompletion(result.sessionId, durable);
+
+            // The vehicle fixture's trust facts ride along; the transaction sequence
+            // itself stays exclusively the coordinator's.
+            ActivityTransactionCoordinator.CompleteExpedition(
+                activityForSession,
+                debug,
+                stopObservation.Value,
+                () => host.CommitChangesWithOutcome(),
+                growthEligible: false,
+                hasLocationEvidence: true);
             RefreshAll();
         }
 
@@ -442,6 +498,9 @@ namespace WalkGame.App
             // of letting celebration copy stand for an action that was never saved.
             _saveHealthMessage = "That change could not be saved, so it was undone. " +
                                  "Your world matches its last good save; try again in a moment.";
+            // Optimistically applied runtime audio must converge back to canonical
+            // settings (M8.5 durability-gated player truth).
+            _feedback?.ReapplyCanonicalSettings();
             RefreshAll();
         }
 
@@ -614,7 +673,8 @@ namespace WalkGame.App
 
         private void StartExpedition(SessionType type)
         {
-            _feedback.Play(FeedbackCue.ExpeditionStart);
+            // No cue here: ExpeditionController.StartConfirmed fires after real provider
+            // start + domain adoption, so failure feedback can never sound like success.
             _expedition.StartExpedition(type);
         }
 
@@ -702,9 +762,24 @@ namespace WalkGame.App
             var request = _motionPermissions.RefreshAsync();
             var observation = new TaskObservation<ActivityPermissionState>();
             var observer = TaskObservation.Observe(request, observation);
-            while (!observer.IsCompleted)
+            var lease = new OperationLease();
+            float deadline = Time.realtimeSinceStartup + 30f;
+            while (!observer.IsCompleted && Time.realtimeSinceStartup < deadline)
             {
                 yield return null;
+            }
+
+            if (!observer.IsCompleted)
+            {
+                // Bounded policy: late refresh results are dropped by their cleanup owner
+                // and cannot fire into destroyed UI or a newer coordinator generation.
+                ProviderOperations.DiscardLateResult(request, lease);
+                yield break;
+            }
+
+            if (!lease.TryAdopt())
+            {
+                yield break;
             }
 
             if (observation.IsFaulted || observation.IsCanceled)
@@ -718,12 +793,26 @@ namespace WalkGame.App
             var request = _motionPermissions.RequestAsync();
             var observation = new TaskObservation<MotionPermissionOutcome>();
             var observer = TaskObservation.Observe(request, observation);
-            while (!observer.IsCompleted)
+            var lease = new OperationLease();
+            float deadline = Time.realtimeSinceStartup + 150f;
+            while (!observer.IsCompleted && Time.realtimeSinceStartup < deadline)
             {
                 yield return null;
             }
 
             _permissionRequestInFlight = false;
+
+            if (!observer.IsCompleted)
+            {
+                ProviderOperations.DiscardLateResult(request, lease);
+                yield break;
+            }
+
+            if (!lease.TryAdopt())
+            {
+                yield break;
+            }
+
             if (observation.IsFaulted || observation.IsCanceled)
             {
                 GameHost.Current?.Log.Warning("Motion permission request faulted; state left unchanged.");

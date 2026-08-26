@@ -1,6 +1,6 @@
 # M8.5 Audit — Runtime Ownership & Rollback Fidelity
 
-**Status:** ACTIVE planning evidence  
+**Status:** COMPLETE (implemented; see tasks.md evidence footer)
 **Repository:** `quantdale/walk-game`  
 **Planned-From:** `main@616924fcbe61bc50a1c7f064b0fe6fe00fb185ba`  
 **Base tree:** `57fcc79b598b69ed2c5bba86ff21536e40ed1e65`  

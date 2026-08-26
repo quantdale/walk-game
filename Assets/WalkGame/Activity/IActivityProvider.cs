@@ -117,6 +117,20 @@ namespace WalkGame.Activity
             Task<SessionStartError> StartSessionAsync(SessionType sessionType);
             Task<ActiveSessionSample> PollSessionAsync();
             Task<ActivitySessionResult> StopSessionAsync();
+
+            /// <summary>
+            /// Explicit idempotent provider teardown (M8.5 runtime-ownership, ADR 0011).
+            /// Stops native passive monitoring and any transient live session owned by
+            /// THIS provider instance, invalidates its pending callback ownership, and
+            /// refuses new operations afterwards (benign fail-closed results, never
+            /// throws). Shutdown is NOT a durable acknowledgment: staged claims are
+            /// restored to retryable form rather than consumed, no completion result is
+            /// fabricated for a live session, and restart reconstruction from the durable
+            /// cursor plus native absolute sources stays intact. Repeated calls are
+            /// harmless. Composition roots MUST call this before dropping or replacing
+            /// a provider reference.
+            /// </summary>
+            void Shutdown();
         }
 
     /// <summary>Transient live reading for an in-progress Expedition.</summary>

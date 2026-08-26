@@ -12,13 +12,15 @@ Evidence tiers:
 - **DEVICE** — requires physical/emulated mobile hardware.
 - **UNVERIFIED** — claimed by no evidence yet.
 
-Last updated: 2026-08-26 (M8.4 runtime orchestration durability & headless certification campaign)
+Last updated: 2026-08-26 (M8.5 runtime ownership & rollback fidelity campaign)
 
 ## Verification status
 
-- Domain test suite: **185/185 passing (AUTOMATED)** via
+- Domain test suite: **213/213 passing (AUTOMATED)** via
   `dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj`
-  (`scripts/verify-domain.ps1`; also runs in CI on every push/PR to `main`). M8.4 added 20 headless scenarios (165 → 185).
+  (`scripts/verify-domain.ps1`; also runs in CI on every push/PR to `main`). M8.5 added 28 headless scenarios (185 → 213):
+  provider lifetime, operation-ownership races, Android claim identity, vehicle-path transaction convergence,
+  durability-gated presentation, dirty-target rollback fidelity, and dedup canonicalization.
 - CI domain gate: configured (`.github/workflows/domain-tests.yml`) now including the
   release-hygiene/privacy audit — **AUTOMATED**.
 - Unity `6000.3.4f1` is installed at `C:\UnityEditors\6000.3.4f1\Editor`, its executable
@@ -38,10 +40,10 @@ Last updated: 2026-08-26 (M8.4 runtime orchestration durability & headless certi
   Android build/install/launch and native lifecycle evidence remain **UNVERIFIED**;
   `scripts/verify-android-smoke.ps1` is committed and ready for the first emulator/device.
   iOS Xcode generation/build remains **UNVERIFIED** (no macOS/Xcode).
-- Static bring-up audit of assemblies/GUIDs/scenes/packages: **AUTOMATED**; 102 asset files
-  and 102 `.meta` files pass the audit with zero missing real GUID references. The only unresolved
+- Static bring-up audit of assemblies/GUIDs/scenes/packages: **AUTOMATED**; 107 asset files
+  and 107 `.meta` files pass the audit with zero missing real GUID references. The only unresolved
   scene GUID is Unity's built-in zero GUID for the authored light. (Counts refreshed by the
-  M8.4 campaign; the pre-M8.1 record cited 94/94.)
+  M8.5 campaign; earlier records cited 94/94, then 102/102.)
 
 ## Phase 0 - Foundation
 
@@ -416,7 +418,7 @@ passive preparation (stranded provider claim). Fatal commits NRE'd on the next p
 | `GameHost.CommitChangesWithOutcome()` | three-way outcome (`Committed` / `RevertedToLastKnownGood` / `FatalPersistenceLoss`) with identical `PersistenceReverted` / `DurableCommitResolved` event semantics; existing `CommitChanges()` wraps it |
 | `WalkGame.Activity` → `WalkGame.Persistence` assembly reference | coordinator can see commit outcome without duplicating the enum |
 | `ExpeditionController.RunExpedition` rewrite | captures provider/activity before fatal teardown; delegates both result and no-result paths to coordinator; repairs resurrected marker in same process; truthful `StatusMessage` gating on `Committed` vs `Reverted` vs `Fatal` |
-| `ActivityTicker.ReconcileRoutine` rewrite | captures refs before fatal; timeout path drains late completion on the main thread and rejects unprocessed delivery (`durable=false`, cursor untouched) up to a 30 s hard cap; commit path delegates to coordinator; NRE on fatal fixed |
+| `ActivityTicker.ReconcileRoutine` rewrite | captures refs before fatal; timeout path drains late completion on the main thread and rejects unprocessed delivery (`durable=false`, cursor untouched) — superseded in M8.5 by the terminal-ownership lease (ADR 0011), which removes the 30 s hard cap entirely; commit path delegates to coordinator; NRE on fatal fixed |
 | `ActivityTicker.CompleteSessionRoutine` (debug) | same coordinator path so the debug menu matches the real Expedition transaction |
 | Passive revert repair | `DeliverPreparedPassive` now also repairs a resurrected marker after `Reverted`, so an expedition-fail→passive-fail chain does not strand the next retry |
 | Regression coverage | `ApplicationOrchestrationTests` (17 scenarios: F1–F14 mandatory plus variants), extensions to `ActivityServiceTests`, `AndroidCounterReconciliationTests`, `SaveLoadTests`; all 185 headless tests pass |
@@ -436,6 +438,63 @@ passive preparation (stranded provider claim). Fatal commits NRE'd on the next p
 
 ### Deliberate remaining limitations
 
-- Provider claim/restoration state stays in-memory by design (see ADR 0009); crash recovery derives from persisted cursors plus native absolute/history facts. A provider task that never completes after the 30 s hard cap may leave a claim open until restart — the only unbounded wait; providers that hang forever are provider bugs.
+- Provider claim/restoration state stays in-memory by design (see ADR 0009); crash recovery derives from persisted cursors plus native absolute/history facts. ~~A provider task that never completes after the 30 s hard cap may leave a claim open until restart~~ Superseded by M8.5/ADR 0011: abandoned operations keep a deterministic cleanup owner forever, so no claim can be stranded by timing. A provider task that NEVER completes is a provider bug and still holds its own staged window (single-open-claim rule keeps later windows safe).
 - Fatal persistence loss remains fail-closed per ADR 0007; movement observed inside a fatal window is unrecoverable and no bonus is synthesized.
 - Scene composition (`AppFlowController`, `Builder`/`Explore` rig, `UiComposer`) and provider JNI / CoreMotion callbacks remain UNVERIFIED without an editor/device.
+
+## M8.5 campaign — runtime ownership & rollback fidelity (ADR 0011)
+
+**Scope:** operation/instance ownership after M8.4: provider lifetime, cancellation vs
+terminal-ownership semantics for async provider operations, Android claim identity,
+convergence of every active-session completion path onto one transaction protocol,
+durability-gated presentation truth, exact rollback graph fidelity, and dedup
+canonicalization.
+
+Start SHA `fb619e93df3db2c5b86a190a6dcea01efb64442f` (M8.5 planner handoff reconciled from
+`main@616924fcbe61bc50a1c7f064b0fe6fe00fb185ba`), branch
+`agent/walk-game/m8.5-exec-20260826`, single-writer lease `sess-m85-exec-20260826`.
+Baseline re-run fresh this campaign: **185/185** headless PASS before changes.
+
+### Defects fixed — AUTOMATED evidence
+
+| Finding | Fix | Evidence |
+| --- | --- | --- |
+| H1 Android stale delivery resolution mutated newer claims | engine-free claim identity: `AndroidCounterReconciler.OpenClaimId` + `AcknowledgeClaim(id)` / `RestoreClaim(id)` resolve only the named claim; adapter binds `deliveryId` to it; stale/repeated/null/unknown are no-ops | `AndroidCounterReconciliationTests` identity suite incl. `StaleOrUnknownOrNull_Resolution_CannotMutateANewerClaim` |
+| H2 ownerless late passive task (30 s drain admitted stranding) | engine-free `OperationLease` + `ProviderOperations.AbandonPreparation`: atomic exactly-one-terminal-owner transfer; cleanup continuation rejects any late delivery whenever it arrives; 12 s deadline stays scheduling-only | `OperationOwnershipTests.AbandonWins_CompletingLate_RejectsDeliveryExactlyOnce_ClaimNotStranded`, `.TimedOutThenLateDelivery_NextReconcileDeliversTheSameMovementOnce` |
+| H3 no provider teardown contract | `IActivityProvider.Shutdown()` idempotent contract on Debug/Unavailable/Android/iOS: stops native monitoring/live updates, refuses new work, RESTORES claim/completion state instead of consuming, never fabricates durable ack; `GameHost.ShutdownProvider()` runs BEFORE graph drop on blocked transition, retry-load, start-over, destroy | `ProviderLifetimeTests` (5 scenarios); ordering enforced in `GameHost.EnterBlockedState` / `RetryLoadFromDisk` / `StartOverWithFreshProfile` / `OnDestroy` |
+| H4 unbounded Expedition tasks | bounded policy waits (start/poll 10 s, stop 30 s) with lease-owned late-result disposal; hung stop routes through shared no-result close plus non-durable late resolution | `RuntimeOwnershipOrchestrationTests.HungStop_AbandonedThenLateResult_ConvergesWithoutDoubleCredit`; `ExpeditionController.RunExpedition` |
+| H5 start adoption leak | start success + `BeginExpedition` rejection aborts via `ActiveSessionAbort.Abort`: session stopped, base movement returned non-durably | `OperationOwnershipTests.StartAdoptionFailure_AbortStopsSession_MovementReturnsToPassiveStream`; wired in controller, ticker debug path, vehicle path |
+| H6 vehicle/debug second transaction path | `UiComposer.VehicleSessionRoutine` delegates result/fault/no-result to the coordinator (trust facts ride along); repo-wide search shows no unsanctioned completion sequence remains | `RuntimeOwnershipOrchestrationTests.VehicleStyleCompletion_*` (marker repair on failed commit, bonus rejected, base kept); grep audit in campaign report |
+| H7 rolled-back reward displayed as earned | engine-free `ExpeditionResultPresentation`: positive reward copy only for committed outcomes; reverted → truthful unsaved/retryable copy; fatal → recovery copy only; start cue fires only after real adoption (`StartConfirmed`); audio reapplied from canonical values on revert; permission handler named/detached with owned observations | `RuntimeOwnershipOrchestrationTests.Presentation_*` (3 scenarios); wiring in `ExpeditionController`, `UiComposer`, `FeedbackController.ReapplyCanonicalSettings` |
+| M1 permission callback outlives UI | named `OnMotionPermissionStateChanged` detached in `OnDestroy`; refresh/request bounded with `DiscardLateResult` owners | `UiComposer.Compose`/`OnDestroy` |
+| M2 audio divergence after rollback | `_feedback.ReapplyCanonicalSettings()` on `PersistenceReverted` | `UiComposer.OnPersistenceReverted` |
+| H8 stale nested rollback keys | `ProfileStateCopier.CopyWorldState` prunes target-only building/producer keys inside surviving regions after reuse of surviving instances | `SaveIntegrityApplicationTests.CopyInto_DirtyTarget_RemovesTargetOnlyNestedKeys_AndSerializesExactly` (fails pre-fix, passes post-fix; serialization equality + surviving identities) |
+| H9 duplicate dedup entries reopen credited keys | `CreditedActivityKeys.Rebuild()` canonicalization: null/empty removed, duplicates collapsed most-recent-first, capacity applied to unique sequence, membership rebuilt exactly | `DedupCanonicalizationTests` (8 scenarios incl. corruption-across-eviction-boundary failing pre-fix) |
+
+### M8.5 certification matrix
+
+| Gate | Result | Evidence |
+| --- | --- | --- |
+| Domain suite | PASS | **213/213** (`dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj`, this campaign; baseline was 185/185) |
+| verify-domain.ps1 | PASS | same suite + restore check, exit 0 |
+| Unity static audit | PASS | 107 assets / 107 metas, Unity 6000.3.4f1 pin (`verify-unity-static.ps1`) |
+| Release hygiene / privacy audit | PASS | 63 runtime sources scanned, manifest minimal (`verify-release-hygiene.ps1`) |
+| Agent guard suites | PASS (ps) | 24/24 ps tier; 12 sh-tier failures are the known WSL `bash.exe` shadowing (see M8.3/M8.4 matrices; ps tier authoritative) |
+| Repository identity (live) | PASS | `assert-repo-identity.sh` exit 0 pre-work; re-run before integration |
+| `git diff --check` | PASS | clean at final gate run |
+| Unity EditMode/PlayMode | UNVERIFIED | licensed editor still blocked (Hub holds zero accounts; licensing client reports "Token not found in cache"); repro: sign into Hub, activate, `scripts/setup-unity-project.ps1`, `scripts/verify-unity-editmode.ps1` / `verify-unity-playmode.ps1`. New Unity-side wiring (ticker/controller/composer) compiles under static gates only |
+| Android build/device tiers | UNVERIFIED | Android Build Support absent; provider changes compile under `UNITY_ANDROID && !UNITY_EDITOR` guards; repro: install Build Support + SDK, `scripts/verify-android-smoke.ps1` |
+| iOS/Xcode tiers | UNVERIFIED | macOS/Xcode/signing unavailable; iOS teardown change reviewed statically only |
+
+### Deliberate remaining limitations (M8.5)
+
+- A provider task that never completes at all still holds its own single staged window
+  (by design: fail-closed, and later windows stay safe). The difference from pre-M8.5 is
+  that any task that DOES complete — at any time — has an owner that converges state;
+  there is no longer a timing-based stranding window.
+- PlayMode-only behaviors (coroutine scheduling under real frame timing, scene
+  recomposition, JNI/CoreMotion callback timing) remain UNVERIFIED until a licensed
+  editor/device exists; their correctness-critical decisions were extracted engine-free
+  and certified headlessly instead.
+- No save-schema change: dedup canonicalization repairs existing fields at load;
+  claim ids are transient provider-private state.

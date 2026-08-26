@@ -236,3 +236,12 @@ that bypasses the coordinator would be caught by the new tests or by the standin
 - The standalone .NET project now compiles and executes the correctness-critical
   transaction decisions; PlayMode ticker/Expedition timing, scene composition, and
   provider JNI callbacks remain honestly UNVERIFIED without the corresponding hardware/editor.
+
+## Amendment (M8.5 / ADR 0011)
+
+Section 4's hard-drain ceiling was superseded by ADR 0011's terminal-ownership lease:
+the "30 additional seconds" observation window and its "claim may remain open until
+process restart" residual are replaced by a deterministic cleanup owner that survives
+the observing coroutine and rejects any late-completing preparation whenever it arrives.
+There is no longer any cutoff after which a future completion becomes ownerless. All
+guarantees in this document remain; the drain-cap paragraph is historical record.

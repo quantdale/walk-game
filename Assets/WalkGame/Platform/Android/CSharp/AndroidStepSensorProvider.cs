@@ -56,6 +56,9 @@ namespace WalkGame.Platform.Android
         private bool _monitoringStarted;
         private long _pendingAtSessionStart;
 
+        // M8.5 provider lifetime (ADR 0011): idempotent teardown state.
+        private bool _shutdown;
+
         public AndroidStepSensorProvider(IClock clock, Log log = null)
         : this(clock, null, null, null, log)
         {
@@ -219,7 +222,7 @@ namespace WalkGame.Platform.Android
         {
             lock (_gate)
             {
-                if (!IsCounterAvailable() || ReadRefinedPermission() != ActivityPermissionState.Granted)
+                if (_shutdown || !IsCounterAvailable() || ReadRefinedPermission() != ActivityPermissionState.Granted)
                 {
                     return Task.FromResult<PreparedActivityDelivery>(null);
                 }
@@ -253,19 +256,28 @@ namespace WalkGame.Platform.Android
                     quality = new ActivityQuality { hasStepEvidence = true },
                 };
                 snapshot.providerRecordIds.Add($"android.counter.{end.Ticks}");
-                return Task.FromResult(new PreparedActivityDelivery { snapshot = snapshot });
+                // M8.5 claim identity (runtime-ownership I4): the delivery carries the
+                // reconciler's open-claim token so resolution can only ever affect THIS
+                // claim; stale/late resolutions of older deliveries are no-ops.
+                return Task.FromResult(new PreparedActivityDelivery
+                {
+                    deliveryId = _reconciler.OpenClaimId,
+                    snapshot = snapshot,
+                });
             }
         }
 
-        /// <summary>ADR 0009 resolution. Durable success drops the open claim; a rejected
-        /// commit returns its steps to the pending stream so the same base movement is
-        /// retried instead of lost. The runtime baseline intentionally stays ahead of a
-        /// rolled-back persisted cursor: folds only credit raw increases from that
-        /// baseline, and a process restart re-seeds from the conservative persisted
-        /// value, so both paths reconstruct the uncommitted window exactly once.</summary>
+        /// <summary>ADR 0009 resolution, bound to delivery identity. Durable success drops
+        /// only the NAMED open claim; a rejected commit returns its steps to the pending
+        /// stream so the same base movement is retried instead of lost. Stale, repeated,
+        /// unknown, or null ids are harmless no-ops that never mutate a newer claim. The
+        /// runtime baseline intentionally stays ahead of a rolled-back persisted cursor:
+        /// folds only credit raw increases from that baseline, and a process restart
+        /// re-seeds from the conservative persisted value, so both paths reconstruct the
+        /// uncommitted window exactly once.</summary>
         public void ResolvePreparedDelivery(PreparedActivityDelivery delivery, bool durable)
         {
-            if (delivery == null)
+            if (delivery == null || string.IsNullOrEmpty(delivery.deliveryId))
             {
                 return;
             }
@@ -277,13 +289,16 @@ namespace WalkGame.Platform.Android
                     return; // already resolved or stale: idempotent no-op
                 }
 
-                if (durable)
+                bool resolved = durable
+                    ? _reconciler.AcknowledgeClaim(delivery.deliveryId)
+                    : _reconciler.RestoreClaim(delivery.deliveryId);
+                if (!resolved)
                 {
-                    _reconciler.AcknowledgeClaim();
+                    return; // identity mismatch: a stale resolution never touches the newer claim
                 }
-                else
+
+                if (!durable)
                 {
-                    _reconciler.RestoreClaim();
                     _log.Warning("Passive delivery rejected after a failed save; movement restored for retry.");
                 }
             }
@@ -322,7 +337,7 @@ namespace WalkGame.Platform.Android
         {
             lock (_gate)
             {
-                if (!IsCounterAvailable())
+                if (_shutdown || !IsCounterAvailable())
                 {
                     return Task.FromResult(SessionStartError.SensorUnavailable);
                 }
@@ -417,6 +432,56 @@ namespace WalkGame.Platform.Android
                 verifiedMovingSeconds = System.Math.Max(0, (endUtc - finished.startedAtUtc).TotalSeconds),
                 cadenceConsistency = null,
             });
+        }
+
+        /// <summary>
+        /// Idempotent M8.5 teardown (ADR 0011): stops native step monitoring through the
+        /// Kotlin bridge, restores provider-private claim/completion state to retryable
+        /// pending form, drops any transient session WITHOUT fabricating a result, and
+        /// refuses new operations. Never acknowledges staged movement as durable; restart
+        /// reconstruction stays derivable from the durable cursor and the native absolute
+        /// counter. Teardown failures are logged and contained.
+        /// </summary>
+        public void Shutdown()
+        {
+            lock (_gate)
+            {
+                if (_shutdown)
+                {
+                    return;
+                }
+
+                _shutdown = true;
+                _session = null;
+
+                // Restore rather than consume: staged claims return to retryable form.
+                if (_reconciler.HasOpenClaim)
+                {
+                    _reconciler.RestoreClaim(_reconciler.OpenClaimId);
+                }
+
+                if (_pendingCompletionSessionSteps > 0)
+                {
+                    _reconciler.RestorePending(_pendingCompletionSessionSteps);
+                }
+
+                _pendingCompletionSessionId = null;
+                _pendingCompletionSessionSteps = 0;
+            }
+
+            try
+            {
+                _bridge.Call("stopMonitoring");
+            }
+            catch (Exception ex)
+            {
+                _log.Warning($"stopMonitoring failed during teardown ({ex.GetType().Name}).");
+            }
+
+            lock (_gate)
+            {
+                _monitoringStarted = false;
+            }
         }
 
         private long CurrentSessionSteps(ActiveSessionState session)

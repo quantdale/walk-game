@@ -114,6 +114,12 @@ ActivitySyncState
 - activeSession: ActiveSessionState?
 ```
 
+Dedup repair policy (M8.5, no schema change): `Rebuild()` canonicalizes the serialized
+`entries` at load/copy time — null/empty keys are removed, duplicate keys collapse onto
+their most-recent occurrence, capacity trims the oldest unique entries, and the
+membership index is rebuilt exactly from the final entries. Corrupt or hand-edited
+duplicate input therefore cannot reopen a surviving credited key across restarts.
+
 `environmentFlags` are canonical presentation switches such as flowing river, living
 wetland, and revived grove. They are derived by reward actions and are never inferred
 from materials, GameObjects, or a scene-only visual. `unlockedProjectIds` remains

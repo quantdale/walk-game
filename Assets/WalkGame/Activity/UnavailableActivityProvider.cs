@@ -55,5 +55,12 @@ namespace WalkGame.Activity
         {
             return Task.FromResult<ActivitySessionResult>(null);
         }
+
+        /// <summary>Idempotent no-op: this provider never owns native work, so teardown
+        /// has nothing to release. Present so every implementation satisfies the same
+        /// public lifetime contract (M8.5 runtime-ownership).</summary>
+        public void Shutdown()
+        {
+        }
     }
 }

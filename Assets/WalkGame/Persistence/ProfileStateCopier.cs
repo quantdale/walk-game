@@ -135,6 +135,13 @@ namespace WalkGame.Persistence
                     producerClone.lastCheckpointUtc = producerPair.Value.lastCheckpointUtc;
                     producerClone.storedOutput = producerPair.Value.storedOutput;
                 }
+
+                // M8.5 rollback fidelity (ADR 0007 exact-disk-truth): a dirty live
+                // target may hold nested keys that the durable source does not. Remove
+                // them AFTER survivors were reused/copied so serializer-visible target
+                // state equals the durable graph exactly.
+                PruneStaleKeys(pair.Value.buildingStates, cloned.buildingStates);
+                PruneStaleKeys(pair.Value.producerStates, cloned.producerStates);
             }
 
             // Drop keys that vanished from the source AFTER reusing/cloning survivors.
@@ -150,6 +157,30 @@ namespace WalkGame.Persistence
             foreach (var stale in staleRegionIds)
             {
                 target.regionStates.Remove(stale);
+            }
+        }
+
+        private static void PruneStaleKeys<TValue>(
+            Dictionary<string, TValue> source,
+            Dictionary<string, TValue> target)
+        {
+            List<string> staleKeys = null;
+            foreach (var key in target.Keys)
+            {
+                if (!source.ContainsKey(key))
+                {
+                    (staleKeys ??= new List<string>()).Add(key);
+                }
+            }
+
+            if (staleKeys == null)
+            {
+                return;
+            }
+
+            foreach (var stale in staleKeys)
+            {
+                target.Remove(stale);
             }
         }
 

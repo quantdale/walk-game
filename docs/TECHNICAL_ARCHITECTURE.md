@@ -90,17 +90,24 @@ Never scatter `DateTime.UtcNow` directly across gameplay code.
 ### `ActivityService`
 Consumes one or more `IActivityProvider` implementations and produces normalized activity deltas.
 
-### `ActivityTransactionCoordinator` (ADR 0010)
+### `ActivityTransactionCoordinator` (ADR 0010, extended by ADR 0011)
 Engine-free orchestration of the activity transaction protocol. Unity sees `PreparePassiveDeliveryAsync` /
 `ResolvePreparedDelivery` / `ResolveSessionCompletion` as a two-phase commit, but the ordering
 — process → `CommitChangesWithOutcome()` → resolve → post-rollback marker repair — lives here so
 the headless suite certifies the real application sequence. `GameHost.CommitChangesWithOutcome()`
 exposes the three-way outcome (`Committed` / `RevertedToLastKnownGood` / `FatalPersistenceLoss`)
-with identical `PersistenceReverted` / `DurableCommitResolved` events; `ExpeditionController` and
-`ActivityTicker` are thin wiring that captures provider/activity refs before a fatal teardown and
-delegates both result and no-result paths to the coordinator. The 12-second ticker timeout drains
-late completions on the main thread and rejects unprocessed deliveries (`durable=false`, cursor
-untouched) up to a 30 s hard cap so a late `ClaimPending` cannot strand passive earning.
+with identical `PersistenceReverted` / `DurableCommitResolved` events; `ExpeditionController`,
+`ActivityTicker`, and the debug vehicle path are thin wiring that captures provider/activity refs
+before a fatal teardown and delegates every result / no-result / fault path to the coordinator.
+
+Operation ownership (ADR 0011): every async provider operation observed by the application carries
+an engine-free `OperationLease` that admits exactly one terminal owner. The 12-second ticker deadline
+is scheduling policy only: on expiry, terminal ownership transfers atomically to a deterministic
+cleanup owner that survives the coroutine, and any late-completing preparation is rejected unprocessed
+(`durable=false`, cursor untouched) whenever it arrives — there is no cutoff after which a future
+completion becomes ownerless, so no provider claim can be stranded. Providers implement an explicit
+idempotent `Shutdown()`; `GameHost` tears the provider down BEFORE dropping or rebuilding the service
+graph (blocked transition, retry-load, start-over, destroy).
 
 ### `VitalityLedger`
 Only component allowed to credit/spend Vitality.

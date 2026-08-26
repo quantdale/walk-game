@@ -377,6 +377,20 @@ marker, and no-result stop paths (`StopSessionAsync` fault/cancel/null) durably
 close the marker through the same transaction. Fatal persistence loss during
 completion or passive reconciliation fails closed and never fabricates reward.
 
+Operation ownership & player truth (ADR 0011):
+- Every active-session completion — normal Expeditions, ticker debug sessions, and
+  the debug vehicle fixture — delegates to the same transaction coordinator; no path
+  re-implements process → commit → resolve → repair. A provider start whose domain
+  adoption fails is explicitly aborted and its movement returns to the passive stream.
+- Timeout is scheduling policy, never durability: an abandoned passive preparation or
+  session stop keeps a deterministic cleanup owner forever, so any late completion is
+  rejected/resolved non-durably exactly once and no provider claim is stranded.
+- Android claim resolution is identity-bound: stale/repeated/unknown/null delivery ids
+  can never acknowledge or restore a newer claim.
+- Positive `+steps → +Vitality` reward copy appears only for proven committed saves;
+  reverted completions show truthful unsaved/retryability copy, fatal loss shows recovery
+  copy only, and the start cue fires only after real provider start + domain adoption.
+
 ## 17. iOS historical reconciliation
 
 Core Motion `CMPedometer` provides up to seven days of historical pedestrian data.

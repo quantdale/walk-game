@@ -187,6 +187,8 @@ namespace WalkGame.Tests
             public Task<ActiveSessionSample> PollSessionAsync() => _inner.PollSessionAsync();
 
             public Task<ActivitySessionResult> StopSessionAsync() => _inner.StopSessionAsync();
+
+            public void Shutdown() => _inner.Shutdown();
         }
 
         private sealed class ThrowingProvider : IActivityProvider
@@ -200,6 +202,7 @@ namespace WalkGame.Tests
             public Task<SessionStartError> StartSessionAsync(SessionType sessionType) => throw new InvalidOperationException("boom");
             public Task<ActiveSessionSample> PollSessionAsync() => throw new InvalidOperationException("boom");
             public Task<ActivitySessionResult> StopSessionAsync() => throw new InvalidOperationException("boom");
+            public void Shutdown() { }
         }
     }
 }

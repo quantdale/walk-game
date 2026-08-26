@@ -244,6 +244,56 @@ namespace WalkGame.Tests
         }
 
         [Test]
+        public void CopyInto_DirtyTarget_RemovesTargetOnlyNestedKeys_AndSerializesExactly()
+        {
+            // M8.5 H8 regression: a failed commit can leave target-only nested state
+            // inside a SURVIVING region. The copier must prune those keys so the
+            // in-place rollback reconstructs exact disk truth (ADR 0007).
+            var serializer = new JsonSaveSerializer();
+            var source = BuildFullyPopulatedProfile();
+            var parsedSource = serializer.Deserialize(serializer.Serialize(source));
+            parsedSource.activityState.creditedIntervals.Rebuild();
+            parsedSource.activityState.creditedSessionIds.Rebuild();
+            string reparsedPayload = serializer.Serialize(parsedSource);
+
+            // Build a dirty live target: surviving regions carry extra building and
+            // producer keys that exist ONLY in memory, plus an extra region.
+            var rollbackTarget = new PlayerProfile();
+            ProfileStateCopier.CopyInto(parsedSource, rollbackTarget); // establish identical graph first
+            var liveRegion = rollbackTarget.worldState.regionStates["region.ashfall"];
+            var phantomBuilding = liveRegion.GetOrCreateBuildingState("building.phantom", "building.phantom.def");
+            phantomBuilding.lifecycleState = BuildingLifecycleState.Restored;
+            phantomBuilding.placement.gridX = 99;
+            liveRegion.producerStates["producer.phantom"] = new ProducerState
+            {
+                producerId = "producer.phantom",
+                buildingInstanceId = "building.phantom",
+                storedOutput = 55,
+            };
+            var phantomRegion = rollbackTarget.worldState.GetOrCreateRegionState("region.phantom");
+            phantomRegion.GetOrCreateBuildingState("building.elsewhere", "building.elsewhere.def");
+
+            Assert.IsNotNull(rollbackTarget.worldState.regionStates["region.ashfall"].buildingStates["building.pump"]);
+
+            ProfileStateCopier.CopyInto(parsedSource, rollbackTarget);
+
+            var region = rollbackTarget.worldState.regionStates["region.ashfall"];
+            Assert.IsFalse(region.buildingStates.ContainsKey("building.phantom"),
+                "target-only building key inside a surviving region must be removed");
+            Assert.IsFalse(region.producerStates.ContainsKey("producer.phantom"),
+                "target-only producer key inside a surviving region must be removed");
+            Assert.IsFalse(rollbackTarget.worldState.regionStates.ContainsKey("region.phantom"),
+                "target-only regions stay removed as before");
+
+            // Surviving identities remain stable for services/scene actors.
+            Assert.AreSame(region, rollbackTarget.worldState.regionStates["region.ashfall"],
+                "surviving region instances are reused, not replaced");
+
+            Assert.AreEqual(reparsedPayload, serializer.Serialize(rollbackTarget),
+                "rollback of a dirty target must equal the serialized durable source exactly");
+        }
+
+        [Test]
         public void CopyInto_NullableFields_CopyExactly_IncludingNulls()
         {
             var target = BuildDurableProfile(out _, out _);

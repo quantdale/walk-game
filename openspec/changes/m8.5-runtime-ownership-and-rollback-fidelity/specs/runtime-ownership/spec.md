@@ -1,7 +1,7 @@
 # Runtime Ownership & Rollback Fidelity Specification
 
 **Change:** `m8.5-runtime-ownership-and-rollback-fidelity`  
-**Status:** ACTIVE  
+**Status:** COMPLETE
 **Scope:** provider lifetime, async operation ownership, activity transaction convergence, durability-gated presentation, rollback graph fidelity, dedup repair
 
 The terms MUST, MUST NOT, SHOULD, and MAY are normative.

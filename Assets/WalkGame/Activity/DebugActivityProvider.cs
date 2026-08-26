@@ -30,6 +30,9 @@ namespace WalkGame.Activity
         private string _pendingSessionId;
         private long _pendingSessionSteps;
 
+        // M8.5 provider lifetime (ADR 0011): idempotent teardown state.
+        private bool _shutdown;
+
         public DebugActivityProvider(IClock clock)
         {
             _clock = clock ?? throw new ArgumentNullException(nameof(clock));
@@ -62,7 +65,7 @@ namespace WalkGame.Activity
         /// staged as a prepared delivery (ADR 0009) instead of being consumed outright.</summary>
         public Task<PreparedActivityDelivery> PreparePassiveDeliveryAsync(ActivityCursor cursor)
         {
-            if (SimulateSensorUnavailable || _permission != ActivityPermissionState.Granted)
+            if (_shutdown || SimulateSensorUnavailable || _permission != ActivityPermissionState.Granted)
             {
                 return Task.FromResult<PreparedActivityDelivery>(null);
             }
@@ -173,7 +176,7 @@ namespace WalkGame.Activity
 
         public Task<SessionStartError> StartSessionAsync(SessionType sessionType)
         {
-            if (SimulateSensorUnavailable)
+            if (_shutdown || SimulateSensorUnavailable)
             {
                 return Task.FromResult(SessionStartError.SensorUnavailable);
             }
@@ -235,6 +238,42 @@ namespace WalkGame.Activity
                     movingSeconds = _session.movingSeconds,
                     currentCadenceStepsPerMinute = SimulateMissingCadence ? null : 100.0,
                 });
+            }
+        }
+
+        /// <summary>
+        /// Idempotent M8.5 teardown: restores provider-private claim/completion state to
+        /// retryable pending form instead of consuming it, drops any transient live
+        /// session WITHOUT fabricating a completion result, and refuses new operations
+        /// afterwards. Never acknowledges staged movement as durable.
+        /// </summary>
+        public void Shutdown()
+        {
+            lock (_gate)
+            {
+                if (_shutdown)
+                {
+                    return;
+                }
+
+                _shutdown = true;
+
+                // Restore rather than consume: staged passive movement stays retryable.
+                var staged = _passiveClaim?.snapshot?.stepCount ?? 0;
+                _passiveClaim = null;
+                if (staged > 0)
+                {
+                    _rawCumulativeStepCounter += staged;
+                }
+
+                // A held completion claim was removed from the counter at stop time;
+                // discarding it without resolution would silently eat that movement.
+                _rawCumulativeStepCounter += _pendingSessionSteps;
+                _pendingSessionId = null;
+                _pendingSessionSteps = 0;
+
+                // Transient session progress remains in the passive stream; no result.
+                _session = null;
             }
         }
 

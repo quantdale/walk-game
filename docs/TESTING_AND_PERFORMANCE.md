@@ -14,20 +14,29 @@ Testing must therefore prioritize:
 
 ## 1A. Current campaign evidence
 
-As of 2026-08-26 (M8.4 runtime orchestration durability, ADR 0010), `dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj`
-passes **185/185** and `scripts/verify-unity-static.ps1` passes the pinned Unity version,
-asset metadata, package invariants, and Bootstrap scene checks (102 assets/102 metas).
+As of 2026-08-26 (M8.5 runtime ownership & rollback fidelity, ADR 0011), `dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj`
+passes **213/213** and `scripts/verify-unity-static.ps1` passes the pinned Unity version,
+asset metadata, package invariants, and Bootstrap scene checks (107 assets/107 metas).
 `scripts/verify-release-hygiene.ps1` adds a CI-runnable privacy/release audit (no GPS/save-path
 logging, Log-wrapper enforcement, minimal manifest). Player-facing state is covered by
 `PlayerExperienceTests`, exactly-once by `ActivityServiceTests` + `InterruptedSessionRecoveryTests`
 (process-death, late deliveries, save/reload), pacing by `AshfallEconomyPacingTests`, and the
-**real application transaction protocol** by `MovementDeliveryDurabilityTests` plus the new
-`ApplicationOrchestrationTests` (17 headless scenarios: F1–F14 mandatory — persisted-marker
-success/failure/retry/duplicate/fatal, stop-null/fault, restart convergence, passive ack/reject
-suppressed/late-claim/blocked/duplicate, and durability-gated feedback truthfulness) through the
-engine-free `ActivityTransactionCoordinator`. The coordinator and `GameHost.CommitChangesWithOutcome()`
-are now the extracted, headlessly certified surface; ticker and Expedition timing, scene
-composition, and provider JNI / CoreMotion callbacks remain UNVERIFIED without an editor/device.
+**real application transaction protocol** by `MovementDeliveryDurabilityTests`,
+`ApplicationOrchestrationTests`, and the M8.5 suites:
+
+- `OperationOwnershipTests` — timeout/completion races have exactly one terminal owner;
+  abandoned preparations/stops converge provider state without stranding claims or losing retryability.
+- `ProviderLifetimeTests` — idempotent `Shutdown()` contract: refuses new work, restores staged
+  claims instead of consuming, never fabricates durable acknowledgment.
+- `RuntimeOwnershipOrchestrationTests` — debug/vehicle completions through the shared coordinator on
+  failed persistence (marker repair), hung-stop convergence, durability-gated reward presentation.
+- `DedupCanonicalizationTests` + the dirty-target rollback fidelity test in
+  `SaveIntegrityApplicationTests`.
+
+The coordinator, `GameHost.CommitChangesWithOutcome()`, `OperationLease`/`ProviderOperations`,
+and `ExpeditionResultPresentation` are the extracted, headlessly certified surface; ticker and
+Expedition frame timing, scene composition, and provider JNI / CoreMotion callbacks remain
+UNVERIFIED without an editor/device.
 
 The procedural environment kit uses shared materials, property blocks for state tinting,
 static geometry after construction, reused UI rows, and `Physics.OverlapSphereNonAlloc`

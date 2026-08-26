@@ -49,14 +49,19 @@ namespace WalkGame.Activity
         /// <summary>
         /// Completes an Expedition session through the durable transaction protocol.
         /// Handles both the normal result path and the no-result stop-fault path (result==null).
-        /// Trust is evaluated here so App stays thin and certifiable.
+        /// Trust is evaluated here so App stays thin and certifiable; callers may supply
+        /// evidence facts (e.g. the debug vehicle fixture's location-evidence shape) but
+        /// MUST NOT re-implement the transaction sequence itself (M8.5 invariant I5).
         /// </summary>
         public static ExpeditionCompletionReport CompleteExpedition(
             ActivityService activity,
             IActivityProvider provider,
             ActivitySessionResult result,
             Func<PersistenceCommitOutcome> commit,
-            bool growthEligible = false)
+            bool growthEligible = false,
+            bool hasLocationEvidence = false,
+            bool mockLocationSuspected = false,
+            bool teleportJump = false)
         {
             if (activity == null) throw new ArgumentNullException(nameof(activity));
             if (provider == null) throw new ArgumentNullException(nameof(provider));
@@ -114,9 +119,9 @@ namespace WalkGame.Activity
                     accumulatedDistanceMeters = result.verifiedDistanceMeters,
                     movingSeconds = result.verifiedMovingSeconds,
                 },
-                hasLocationEvidence: false,
-                mockLocationSuspected: false,
-                teleportJump: false);
+                hasLocationEvidence: hasLocationEvidence,
+                mockLocationSuspected: mockLocationSuspected,
+                teleportJump: teleportJump);
 
             long originalSteps = result.acceptedSteps;
             string sessionId = result.sessionId;
@@ -247,6 +252,57 @@ namespace WalkGame.Activity
             if (delivery == null) return;
             if (delivery.snapshot == null) return;
             provider.ResolvePreparedDelivery(delivery, false);
+        }
+    }
+
+    /// <summary>
+    /// Durability-gated player truth (M8.5 runtime-ownership, invariant I6): positive
+    /// reward copy and success-only completion status may only exist for a PROVEN
+    /// DURABLE commit. A reverted completion shows truthful unsaved/retryability copy
+    /// with NO rolled-back reward; a fatal loss shows recovery copy only. Engine-free so
+    /// the gating is certifiable headlessly; Unity controllers are thin wiring over this.
+    /// </summary>
+    public static class ExpeditionResultPresentation
+    {
+        public static string RewardSummary(ExpeditionCompletionReport report)
+        {
+            var result = CommittedResultOrNull(report);
+            return result == null ? string.Empty : BuildRewardSummary(result);
+        }
+
+        public static string CompletionStatus(ExpeditionCompletionReport report)
+        {
+            if (report == null)
+            {
+                return string.Empty;
+            }
+
+            if (report.isFatal)
+            {
+                return "Expedition could not be saved and recovery is required; your world is safe";
+            }
+
+            return report.commitOutcome == PersistenceCommitOutcome.Committed
+                ? "Expedition complete"
+                : "Expedition finished, but it could not be saved; your steps stay safe and will be credited once saving works again";
+        }
+
+        /// <summary>The processed result only when its reward is durably proven.</summary>
+        private static ActivitySessionResult CommittedResultOrNull(ExpeditionCompletionReport report)
+        {
+            if (report == null || report.isFatal || report.processedResult == null)
+            {
+                return null;
+            }
+
+            return report.commitOutcome == PersistenceCommitOutcome.Committed ? report.processedResult : null;
+        }
+
+        private static string BuildRewardSummary(ActivitySessionResult result)
+        {
+            long bonus = result.bonusBreakdown?.totalBonus ?? 0;
+            return $"+{result.acceptedSteps} steps → +{result.acceptedSteps + bonus} Vitality" +
+                   (bonus > 0 ? $" ({bonus} activity bonus)" : string.Empty);
         }
     }
 }

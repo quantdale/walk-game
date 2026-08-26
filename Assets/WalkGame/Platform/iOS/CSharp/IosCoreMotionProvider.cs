@@ -33,13 +33,16 @@ namespace WalkGame.Platform.iOS
         private static int _lastIssuedRequestId;
 
         private readonly object _gate = new object();
+        private readonly Core.Log _log;
         private readonly IosHistoryWindowPlanner _planner = new IosHistoryWindowPlanner();
         private ActiveSessionState _session;
         private double _sessionStartLiveSteps;
+        private bool _shutdown;
 
-        public IosCoreMotionProvider(IClock clock)
+        public IosCoreMotionProvider(IClock clock, Core.Log log = null)
         {
             Clock = clock ?? throw new ArgumentNullException(nameof(clock));
+            _log = log ?? Core.Log.Disabled;
             RegisterCallbackOnce();
         }
 
@@ -197,7 +200,7 @@ namespace WalkGame.Platform.iOS
         /// </summary>
         public async Task<PreparedActivityDelivery> PreparePassiveDeliveryAsync(ActivityCursor cursor)
         {
-            if (WG_IsPedometerAvailable() == 0 ||
+            if (_shutdown || WG_IsPedometerAvailable() == 0 ||
                 (ActivityPermissionState)WG_GetAuthorizationStatus() != ActivityPermissionState.Granted)
             {
                 return null;
@@ -266,11 +269,45 @@ namespace WalkGame.Platform.iOS
         {
         }
 
+        /// <summary>
+        /// Idempotent M8.5 teardown (ADR 0011): stops live CoreMotion updates so a
+        /// same-process replacement provider cannot inherit an AlreadyRunning condition
+        /// caused solely by leaked live-session state, drops the transient session WITHOUT
+        /// fabricating a completion result, and refuses new passive/active operations.
+        /// Historical preparation consumed no provider-private state, so there is nothing
+        /// to restore; restart reconstruction from the durable cursor plus CoreMotion
+        /// absolute history stays intact. Repeated calls are harmless.
+        /// </summary>
+        public void Shutdown()
+        {
+            lock (_gate)
+            {
+                if (_shutdown)
+                {
+                    return;
+                }
+
+                _shutdown = true;
+                _session = null;
+            }
+
+            try
+            {
+                // Outside the gate: the P/Invoke is process-global live-session state,
+                // not instance state; harmless when no live session is running.
+                WG_StopPedometerUpdates();
+            }
+            catch (Exception ex)
+            {
+                _log.Warning($"WG_StopPedometerUpdates failed during provider teardown ({ex.GetType().Name}).");
+            }
+        }
+
         public Task<SessionStartError> StartSessionAsync(SessionType sessionType)
         {
             lock (_gate)
             {
-                if (WG_IsPedometerAvailable() == 0)
+                if (_shutdown || WG_IsPedometerAvailable() == 0)
                 {
                     return Task.FromResult(SessionStartError.SensorUnavailable);
                 }

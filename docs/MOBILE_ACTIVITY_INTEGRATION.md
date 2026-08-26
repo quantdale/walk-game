@@ -335,11 +335,14 @@ Implemented policy (campaign):
   `ActivityTransactionCoordinator` rejects the provider delivery (`durable=false`) so
   base movement returns to the passive stream, then clears the resurrected marker without
   requiring a restart; the repair converges durably on the next successful commit and
-  remains reconstructible via boot recovery if the process dies before then. Late
-  `PreparePassiveDeliveryAsync` completions that arrive after the ticker's 12-second
-  deadline are drained on the main thread and rejected without processing (cursor
-  untouched) up to a 30 s hard cap so a late provider claim cannot strand passive
-  earning.
+  remains reconstructible via boot recovery if the process dies before then.
+- Operation ownership (M8.5 / ADR 0011): late `PreparePassiveDeliveryAsync` completions are
+  owned forever, not merely drained for a bounded window. When the ticker's 12-second
+  scheduling deadline expires, terminal ownership transfers atomically to a cleanup owner
+  that survives the coroutine; whatever completes later is rejected without processing
+  (cursor untouched), so no provider claim can ever be stranded regardless of completion
+  timing. Provider instances expose idempotent `Shutdown()` and GameHost releases native
+  monitoring/live sessions before any service-graph rebuild or host destruction.
 
 ## 13. Clock and timezone handling
 

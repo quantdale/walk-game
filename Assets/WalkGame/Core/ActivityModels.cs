@@ -158,29 +158,39 @@ namespace WalkGame.Core
         public int Count => _set.Count;
 
         /// <summary>Restores the membership index after <see cref="entries"/> was
-        /// assigned externally (deserialization); applies the bounded-window policy.</summary>
+        /// assigned externally (deserialization); applies the bounded-window policy.
+        /// Canonicalization policy (M8.5, runtime-ownership I8): null/empty keys are
+        /// removed; duplicate keys collapse onto their MOST RECENT occurrence (capacity
+        /// semantics are newest-N); capacity then trims the oldest unique entries; the
+        /// membership index is rebuilt exactly from the final entries. Compaction can
+        /// therefore never make a surviving credited key appear uncredited.</summary>
         public void Rebuild()
         {
-            _set.Clear();
+            var uniqueMostRecentFirst = new List<string>(entries.Count);
+            var seen = new HashSet<string>();
             for (int i = entries.Count - 1; i >= 0; i--)
             {
                 var key = entries[i];
-                if (string.IsNullOrEmpty(key))
+                if (string.IsNullOrEmpty(key) || !seen.Add(key))
                 {
-                    entries.RemoveAt(i);
+                    continue;
                 }
+
+                uniqueMostRecentFirst.Add(key);
             }
 
-            for (int i = entries.Count - 1; i >= 0; i--)
+            uniqueMostRecentFirst.Reverse(); // oldest-to-newest by most-recent occurrence
+            if (uniqueMostRecentFirst.Count > _capacity)
             {
-                _set.Add(entries[i]);
+                uniqueMostRecentFirst.RemoveRange(0, uniqueMostRecentFirst.Count - _capacity);
             }
 
-            while (entries.Count > _capacity)
+            entries.Clear();
+            entries.AddRange(uniqueMostRecentFirst);
+            _set.Clear();
+            foreach (var key in entries)
             {
-                var oldest = entries[0];
-                entries.RemoveAt(0);
-                _set.Remove(oldest);
+                _set.Add(key);
             }
         }
 

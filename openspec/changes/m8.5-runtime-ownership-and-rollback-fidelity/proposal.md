@@ -1,6 +1,6 @@
 # M8.5 Proposal — Runtime Ownership & Rollback Fidelity
 
-**Status:** ACTIVE  
+**Status:** COMPLETE
 **Change ID:** `m8.5-runtime-ownership-and-rollback-fidelity`  
 **Planned-From:** `main@616924fcbe61bc50a1c7f064b0fe6fe00fb185ba`  
 **Priority:** High  
