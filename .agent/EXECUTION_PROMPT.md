@@ -273,3 +273,42 @@ Before declaring completion:
 ## Next campaign decision
 
 If M8.6 produces materially green Unity + Android device readiness, recommend **M9 Closed Playtest Readiness / Validation**. If real measurements expose a material exactly-once or performance blocker, recommend a focused campaign on that measured blocker. Do not jump to Region 2 simply because this campaign ends.
+
+---
+
+## 2026-08-27 deep re-audit delta — MUST READ BEFORE EXECUTION
+
+A second exhaustive planning audit was completed against **\`main@068e215388e5031438fc5acb6efb73e9d847f4e7\`** after the original M8.6 package was staged.
+
+It reconfirmed that **M8.6 is the correct next campaign** and found no new headlessly provable Critical/High domain-state tranche that should replace it. It also audited the complete 288-file tracked tree, including all 107 Unity metas, all C# and native/runtime surfaces, tests, scenes, asmdefs, scripts, docs/ADRs, hooks, configs and OpenSpec state.
+
+The detailed delta is appended to:
+
+- \`openspec/changes/m8.6-unity-device-readiness-certification/audit.md\`;
+- \`openspec/changes/m8.6-unity-device-readiness-certification/specs/device-readiness/spec.md\` (new normative E1-E10 requirements);
+- \`openspec/changes/m8.6-unity-device-readiness-certification/tasks.md\` (new section 17).
+
+Those additions are **mandatory**, not suggestions.
+
+### Additional seed findings you must disposition
+
+In addition to F1-F4 already listed above:
+
+1. **Both Unity test wrappers need semantic XML validation.** EditMode can pass with no XML; PlayMode only checks existence. Missing/malformed/empty/stale/incomplete/failed result data must fail closed.
+2. **Prove the Unity executable is exactly 6000.3.4f1.** \`UNITY_EDITOR_PATH\` currently provides a path, not toolchain identity.
+3. **Create an explicit semantic compile/import gate.** \`verify-unity-static.ps1\` is intentionally not a compiler and must never be used as compile evidence.
+4. **Bind every adb call to one serial.** This includes direct \`pidof\` and \`logcat\` calls, not only the helper.
+5. **Fix clean-install uninstall semantics.** The current script comments that an absent package is acceptable but its helper throws on the non-zero uninstall result.
+6. **Persist final/failure evidence truthfully.** The current smoke summary is written before optional cleanup is recorded; make the final artifact reflect final disposition.
+7. **Emit provenance manifests.** Bind Unity/build/device evidence to source SHA, exact toolchain, APK SHA-256 and exact target identity.
+8. **Do not equate process-alive with gameplay-ready.** Lifecycle process evidence, PlayMode composition evidence, physical UX evidence and real sensor evidence are separate tiers.
+9. **Conditional iOS:** only if the real lane exists, make post-build permission-string evidence fail closed and repair the stale helper name in \`IOS_BUILD_REQUIREMENTS.md\`.
+
+### Execution priority adjustment
+
+Within the existing 12-hour budget, front-load **evidence-harness integrity** immediately after baseline/environment inventory, because all later PASS claims depend on it:
+
+\`identity/reconcile -> fresh headless baseline -> toolchain/provenance preflight -> semantic Unity compile -> fail-closed test XML -> EditMode -> PlayMode -> Android build manifest -> exact-target smoke -> physical sensor/UX -> measured performance -> conditional iOS -> final rerun/docs/push\`.
+
+Do not burn time merely to reach 12 wall-clock hours. The instruction is to permit and organize a long autonomous campaign, not to fabricate work. Continue while legitimate M8.6 work remains; finish early if every executable requirement is genuinely complete, or leave an exact continuation point if the budget ends first.
+

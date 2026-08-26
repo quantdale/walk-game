@@ -156,3 +156,153 @@ This planner branch contains no gameplay implementation. The executor must:
 - preserve the M8.5 correctness invariants;
 - leave unavailable external tiers explicitly UNVERIFIED with exact blockers;
 - update docs/OpenSpec/evidence and commit/push a detailed final session report.
+
+---
+
+## 11. Deep re-audit addendum — 2026-08-27
+
+**Re-audited head:** \`main@068e215388e5031438fc5acb6efb73e9d847f4e7\`  
+**Prior implementation base:** \`3bbdbcca11fb20a6680dbb96e808b9df2cca31f3\` (M8.5 complete)  
+**Purpose:** independently re-check the complete current repository before handing M8.6 to a long-running executor, and strengthen the certification contract where the earlier planner package could still produce ambiguous or false-green evidence.
+
+### 11.1 Exhaustive repository coverage ledger
+
+The recursive Git tree was enumerated from the audited head with \`truncated=false\`.
+
+Tracked-file population at this head:
+
+- **288 blobs total**, approximately 1.41 MB of tracked text/source content;
+- **107 Unity \`.meta\` files**;
+- **87 C# files**;
+- **14 assembly definitions**;
+- **47 Markdown files**;
+- **19 repository PowerShell/shell/cmd scripts**;
+- **2 Unity scenes**;
+- Kotlin Android bridge, Objective-C++ iOS bridge, Android manifest, package manifest, project settings, CI workflow, hooks, agent adapters and repository-identity files.
+
+Coverage rules used for this re-audit:
+
+1. Every logic-bearing C#, Kotlin, Objective-C++, PowerShell, shell, cmd, YAML, JSON, XML and asmdef file was included in the content audit.
+2. Every production C# assembly was swept file-by-file: Core, Activity, App, Building, Content, Gameplay, Persistence, Android/iOS platform adapters, UI, World and Editor.
+3. Every EditMode/PlayMode source was included. The headless suite remains historical evidence until rerun by the executor; this planning pass does not relabel it as fresh PASS.
+4. Every repository document, ADR, agent handoff/adapter and both the completed M8.5 and active M8.6 OpenSpec packages were reconciled against implementation claims.
+5. Both committed scenes and all project/package settings were inspected structurally.
+6. **All 107 \`.meta\` files were individually inspected for a syntactically valid 32-character GUID and a real paired tracked asset.** The Bootstrap scene's serialized \`GameHost\` GUID matches \`GameHost.cs.meta\`; the Ashfall scene's serialized \`RegionPresenter\` GUID matches its source meta. No asset-layer mismatch was found in this re-audit. The executor must still rerun \`verify-unity-static.ps1\` for fresh evidence.
+7. Open PRs/issues were checked and the only M8.6 branch found was the planner branch; no implementation/executor branch was active at planning time.
+
+### 11.2 Re-audit verdict
+
+**M8.6 remains the correct next campaign. Do not create an M8.7 implementation campaign first.**
+
+M8.5 materially closed the headlessly reproducible state-integrity, operation-ownership, provider-lifetime, rollback-fidelity and dedup tranche. This re-audit did **not** identify a new headlessly provable Critical/High domain-state defect that should displace device readiness.
+
+The dominant unresolved risk is exactly what M8.6 targets: code that the standalone .NET harness does not compile or execute, plus evidence tooling that can currently overstate success. In particular, App/UI/World/Editor and platform Unity assemblies, the licensed editor import/compile boundary, Android IL2CPP build, JNI/native lifecycle, physical step-counter behavior, touch/safe-area behavior and measured device performance remain the highest-value unknowns.
+
+The prior F1-F4 findings remain valid. The following additional findings are **mandatory M8.6 scope**.
+
+### R1 — Editor-only namespace drift is source-visible and must be reproduced in Unity
+
+\`Assets/WalkGame/Editor/WalkGameEditorTools.cs\` references:
+
+- \`GraphicsSettings\`, whose normal namespace is \`UnityEngine.Rendering\`;
+- \`IPostprocessBuildWithReport\`, whose normal namespace is \`UnityEditor.Build\`.
+
+The file imports \`UnityEditor.Build.Reporting\` but not \`UnityEditor.Build\`, and imports \`UnityEngine\` but not \`UnityEngine.Rendering\`.
+
+**Disposition:** keep the existing rule: reproduce with the pinned licensed editor before describing this as a confirmed Unity compiler failure. Once reproduced, fix the smallest namespace/API root cause and sweep the whole Editor assembly for equivalent semantic drift.
+
+### R2 — EditMode can false-green on exit code alone
+
+\`scripts/verify-unity-editmode.ps1\` deletes stale artifacts but treats Unity exit code 0 as PASS even if \`editmode-results.xml\` was never created, is malformed, contains zero tests, is incomplete, or contains failures that are not reflected in the process exit code.
+
+**Disposition:** fail closed on artifact absence and semantic XML validation, not merely process exit.
+
+### R3 — PlayMode artifact checking is still insufficient
+
+\`scripts/verify-unity-playmode.ps1\` improves on EditMode by requiring the result file to exist, but it does not parse the XML and prove that a non-zero test population completed with zero failures.
+
+**Disposition:** EditMode and PlayMode should share one result-validation policy/helper. A stale, empty, malformed, cancelled, zero-test, inconclusive or failed result must never become PASS.
+
+### R4 — the Unity executable is not proven to match the repository pin
+
+The Unity scripts require \`UNITY_EDITOR_PATH\`, but they do not independently prove that the executable behind that path is **exactly 6000.3.4f1**, the version pinned by \`ProjectSettings/ProjectVersion.txt\`.
+
+A machine can therefore point the scripts at a different editor and still generate apparently valid evidence.
+
+**Disposition:** add a fail-closed editor/toolchain identity preflight used by compile/setup/test/build lanes. Record the effective editor version in artifacts. Do not silently accept a different version merely because it launches.
+
+### R5 — Android target ambiguity affects more than the first adb call
+
+The existing smoke script enumerates all connected targets but does not bind commands to one serial. In addition to helper-mediated calls, direct calls such as \`pidof\` and \`logcat\` also bypass any future target-selection fix unless deliberately updated.
+
+**Disposition:** support an explicit serial and otherwise require exactly one eligible target. Bind **every** adb invocation, including direct process/logcat/dumpsys calls, to that serial. Record serial/model/API/ABI and emulator-vs-physical classification.
+
+### R6 — clean-install handling contradicts its own comment
+
+The current smoke flow calls:
+
+\`Invoke-Adb @("uninstall", $PackageId)\`
+
+with the comment that failure is acceptable when the app is not installed. However, \`Invoke-Adb\` throws on every non-zero adb exit. A legitimately clean target can therefore fail before installation begins.
+
+**Disposition:** make pre-install uninstall idempotent and distinguish "package absent" from a real adb transport/uninstall failure. Add a regression/fixture test for this exact case.
+
+### R7 — smoke evidence ordering and cleanup can lose truthful final-state data
+
+The summary JSON is written before the optional final uninstall step is recorded, so the in-memory final cleanup record is not persisted. Failure paths also do not consistently guarantee a summary artifact before terminating.
+
+**Disposition:** use a \`try/finally\`-style evidence discipline: preserve logcat and a machine-readable summary on both PASS and failure where technically possible, and write the final summary after cleanup/disposition fields are known.
+
+### R8 — build/smoke provenance is under-specified in executable tooling
+
+The Android build wrapper currently proves Unity exit 0 + APK existence. The smoke wrapper records path/size/device strings, but not all of the identity needed to reproduce a certification claim.
+
+**Required provenance fields when the corresponding lane executes:**
+
+- repository source SHA and dirty/clean state;
+- exact Unity editor version;
+- Android Build Support / SDK / NDK / JDK identities where available;
+- build target/backend/architecture and package id;
+- APK SHA-256 and size;
+- selected adb serial, model, API level, ABI and physical/emulator classification;
+- step-counter feature availability;
+- start/end timestamps;
+- artifact/log paths and gate result.
+
+A process merely remaining alive is **lifecycle evidence**, not proof that the correct gameplay UI/scene is usable. Pair process checks with PlayMode evidence and, on device, foreground/resumed-activity and player-visible UX evidence before making a stronger claim.
+
+### R9 — conditional iOS post-build evidence should fail closed when that lane is real
+
+The current iOS postprocessor performs raw \`Info.plist\` string insertion and silently returns when \`Info.plist\` is missing. \`IOS_BUILD_REQUIREMENTS.md\` also names an old/nonexistent helper (\`WalkGameEditorTools.AddPedometerUsageDescription\`) rather than the current postprocessor class.
+
+This is **not** a reason to expand M8.6 into speculative iOS work on Windows.
+
+**Disposition:** only if the genuine iOS lane is executable, make missing/unparseable plist/post-build mutation a certification failure, prefer a structured plist mutation API where supported, and repair the stale documentation name. Otherwise record iOS as UNVERIFIED and leave this as source-readiness follow-up.
+
+### 11.3 System-by-system disposition after the re-audit
+
+| Surface | Re-audit result | M8.6 disposition |
+| --- | --- | --- |
+| Core/domain models, vitality, content IDs | No new campaign-level defect identified; heavily covered by headless tests | Rerun fresh; do not rebalance |
+| Activity transaction / exactly-once | M8.3-M8.5 contracts are coherent in static review | Preserve invariants; device-probe real movement |
+| Persistence / rollback / save recovery | M8.1-M8.5 containment remains coherent in static review | Rerun fault suites; PlayMode/device recovery |
+| App orchestration | Headlessly modeled but Unity lifecycle remains unexecuted | Compile + PlayMode + device lifecycle |
+| UI / World | Static construction/state flow is present; physical touch/safe-area/visual behavior unverified | Physical UX certification |
+| Android native bridge | Narrow sensor-facts boundary preserved; no GPS permission introduced | IL2CPP build + JNI + real step-counter lifecycle |
+| iOS native bridge | Async callback design present; real Xcode/CoreMotion evidence absent | Conditional only |
+| Editor/build tooling | Concrete namespace/evidence gaps remain | Highest-priority early lane |
+| Test harness | 213 historical headless tests; only 5 PlayMode integration tests and no fresh licensed run | Fail-closed result semantics + execute editor suite |
+| Scenes/assets/metas | Static wiring/pairing consistent | Fresh static gate + real import |
+| CI/hooks/agent safety | Identity, writer-lock and remote-advance controls present | Preserve; no force push |
+| Docs/ADRs/OpenSpec | Architecture is substantially reconciled; evidence tiers remain honest | Update only from fresh M8.6 evidence |
+
+### 11.4 Planning conclusion
+
+The executor should treat the re-audit findings above as an additive mandatory delta to the existing M8.6 proposal/design/spec/tasks. They do **not** authorize unrelated refactors or feature expansion.
+
+The desired end state is not "more tests" in the abstract. It is a **trustworthy certification chain**:
+
+\`audited source SHA -> exact pinned toolchain -> semantic Unity compile -> parseable test evidence -> reproducible Android artifact -> exact selected target -> real lifecycle/sensor/UX measurements -> evidence-tiered status\`.
+
+If the environment blocks editor/device lanes, harden every locally executable piece of that chain, capture the blocker once, and move to other legitimate M8.6 work. Never fabricate PASS to make the 12-hour campaign look complete.
+

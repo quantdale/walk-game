@@ -273,3 +273,87 @@ Every completed task MUST have evidence. Unexecutable hardware/platform tasks MU
 
 ### X6 — Safe push
 Before push/integration, remote advancement MUST be checked and any collision deliberately reconciled. No force push.
+
+---
+
+## 16. ADDED Requirements — 2026-08-27 deep re-audit evidence integrity
+
+These requirements are normative additions to M8.6 and override any weaker implication elsewhere in the package.
+
+### E1 — Exact Unity toolchain identity
+
+Any EDITOR-tier PASS MUST prove that the effective editor executable is the repository-pinned \`6000.3.4f1\`. The verifier MUST fail closed on a mismatched editor and MUST record the effective version in evidence.
+
+#### Scenario: wrong editor path
+
+Given \`UNITY_EDITOR_PATH\` points to a runnable Unity version other than \`6000.3.4f1\`, when compile/EditMode/PlayMode/build certification starts, then the gate MUST stop as a toolchain mismatch rather than run and publish PASS evidence.
+
+### E2 — Semantic Unity test-result validation
+
+EditMode and PlayMode MUST require a newly generated, parseable test-result artifact representing the current invocation. A zero exit code alone is insufficient.
+
+The validator MUST reject at minimum:
+
+- missing result file;
+- malformed XML;
+- zero executed tests when tests are expected;
+- failed/error test count greater than zero;
+- root/run status indicating failure, cancellation or incomplete execution;
+- a stale artifact surviving from a prior invocation.
+
+#### Scenario: Unity returns zero without results
+
+Given Unity exits 0 but writes no result XML, when the runner completes, then the gate MUST fail.
+
+#### Scenario: result XML contains a failed test
+
+Given Unity exits 0 but the newly generated result XML contains one or more failed/error tests, when the runner validates evidence, then the gate MUST fail and preserve the XML/log.
+
+### E3 — Explicit semantic compile/import gate
+
+M8.6 MUST have a reproducible batch-mode semantic import/compile gate separate from the static asset checker. The gate MUST preserve an editor log and MUST fail on compiler/import errors. Static validation MUST NOT be renamed or reported as semantic compilation.
+
+### E4 — One exact Android target
+
+Every Android smoke/device command MUST execute against one explicit adb serial.
+
+If the user/executor supplies a serial, it MUST exist in an eligible connected state. If no serial is supplied, the script MUST continue only when exactly one eligible target exists. Multiple eligible targets without an explicit selection MUST fail closed.
+
+All adb calls, including direct \`pidof\`, \`logcat\`, \`dumpsys\`, install/uninstall and shell calls, MUST use the selected serial.
+
+### E5 — Idempotent clean-install preparation
+
+A pre-test uninstall MUST treat "package is not installed" as a successful clean-state condition while still failing on real transport/device/uninstall errors.
+
+#### Scenario: fresh device
+
+Given the target has never installed \`com.quantdale.walkgame\`, when smoke prepares a clean install, then the absence of the package MUST NOT fail the run.
+
+### E6 — Machine-readable provenance
+
+When an EDITOR, BUILD or DEVICE gate executes, its evidence MUST include enough provenance to bind the result to the tested source/toolchain/artifact/target. For applicable fields this includes source SHA, worktree dirty state, editor/toolchain versions, APK SHA-256/size/configuration, target serial/model/API/ABI/classification, step-counter availability, timestamps, result and artifact paths.
+
+### E7 — Evidence tiers cannot be conflated
+
+An emulator without a genuine step-counter MAY satisfy lifecycle smoke only. It MUST NOT satisfy physical movement, touch quality, battery, thermal or real sensor claims.
+
+A process-alive check MAY satisfy only the process/lifecycle assertion it actually proves. It MUST NOT by itself certify correct Bootstrap composition, player-visible UI, touch interaction or exactly-once movement.
+
+### E8 — Failure artifacts are first-class
+
+Where technically possible, Unity/build/device wrappers MUST preserve logs and a final machine-readable summary for failed as well as successful runs. Cleanup MUST NOT erase the evidence required to diagnose the failure.
+
+### E9 — Certification wrappers require regression coverage
+
+Headlessly testable evidence-policy logic introduced in scripts/helpers SHOULD receive deterministic fixture tests for success and false-green cases, especially:
+
+- missing/malformed/failed Unity XML;
+- wrong editor version;
+- zero/multiple/explicit adb-target selection;
+- clean-target package-absent uninstall;
+- provenance fields and final-summary persistence.
+
+### E10 — Conditional iOS post-build truthfulness
+
+Only when the iOS lane is actually executable: a generated Xcode project missing or failing to receive the required motion usage description MUST fail iOS certification. Missing \`Info.plist\` MUST NOT silently produce an iOS PASS.
+

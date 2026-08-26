@@ -417,3 +417,76 @@ Continuation rules:
 - If M8 Android/editor/device readiness is materially green: recommend **M9 Closed Playtest Readiness / Validation**.
 - If a measured mobile performance or exactly-once defect remains: recommend a focused campaign on that measured blocker.
 - Do not recommend Region 2 merely because M8.6 ended.
+
+---
+
+## 17. Mandatory refinements from the 2026-08-27 deep re-audit
+
+These tasks are additive to sections 0-16. Do them in the relevant lane; they are not optional polish.
+
+### 17.1 Establish a trustworthy Unity evidence harness before claiming editor PASS
+
+- [ ] Add a shared fail-closed preflight that proves the effective \`UNITY_EDITOR_PATH\` exists and is exactly Unity \`6000.3.4f1\`.
+- [ ] Record source SHA, dirty/clean state, editor executable identity/version and invocation timestamp into an ignored machine-readable evidence artifact.
+- [ ] Add an explicit batch-mode Unity import/semantic compile verifier, preserving its full editor log.
+- [ ] Reproduce/disposition the \`GraphicsSettings\` / \`IPostprocessBuildWithReport\` Editor namespace prediction using the real pinned editor before calling it a confirmed compile failure.
+- [ ] Sweep every Unity-only assembly after the first compile result: Editor, App, UI, World, Android and iOS guarded assemblies.
+- [ ] Implement one semantic test-result validator used by both EditMode and PlayMode.
+- [ ] Require a newly generated result XML, parseability, non-zero expected test population, zero failures/errors and a completed/pass run state.
+- [ ] Make missing, malformed, empty, stale, cancelled/incomplete or failed XML return non-zero even if Unity itself returned 0.
+- [ ] Preserve XML + editor log on failure.
+- [ ] Add deterministic fixture tests for the validator where practical without Unity.
+
+### 17.2 Make Android smoke target selection and clean-install semantics fail closed
+
+- [ ] Add an explicit serial parameter (for example \`-Serial\`) to \`verify-android-smoke.ps1\`.
+- [ ] If serial is omitted, require exactly one eligible connected target; fail on zero or multiple.
+- [ ] Validate an explicit serial against \`adb devices\` before destructive/install operations.
+- [ ] Centralize selected-target invocation so every adb command receives \`-s <serial>\`.
+- [ ] Audit and fix direct calls that currently bypass \`Invoke-Adb\`, including \`pidof\` and every \`logcat\` capture.
+- [ ] Make pre-install uninstall idempotent: package-absent is clean success, transport/device failures are real failures.
+- [ ] Add a deterministic fixture/mock regression for package-absent uninstall.
+- [ ] Record model, manufacturer if available, API level, ABI, serial and emulator/physical classification.
+- [ ] Record \`android.hardware.sensor.stepcounter\` availability and label an emulator/no-sensor run lifecycle-only.
+- [ ] Strengthen launch evidence: record foreground/resumed package/activity (or equivalent platform evidence) in addition to process-alive checks.
+- [ ] Persist summary/logcat on failure where possible.
+- [ ] Ensure final cleanup/uninstall disposition is written to the persisted summary, not only appended in memory after the JSON file was already emitted.
+
+### 17.3 Bind Android build evidence to the exact source and artifact
+
+- [ ] Extend the Android build wrapper to emit a machine-readable build manifest.
+- [ ] Record source SHA + dirty state, Unity version, Android module/toolchain identities when discoverable, package id, min/target SDK, scripting backend, architecture and development/debug flags.
+- [ ] Record final APK path, byte size and SHA-256.
+- [ ] Refuse a PASS when Unity exits 0 but the expected current-run APK/provenance cannot be established.
+- [ ] Pass or cross-check the APK hash/source SHA into smoke evidence so device results cannot accidentally refer to another build.
+
+### 17.4 Evidence-tier truthfulness
+
+- [ ] Treat editor compile, EditMode, PlayMode, Android build, emulator lifecycle, physical sensor, physical UX, performance/battery/thermal and iOS as distinct evidence tiers.
+- [ ] Never upgrade a lower tier into a higher one by inference.
+- [ ] In \`docs/IMPLEMENTATION_STATUS.md\`, name the actual artifact/target for every newly green tier.
+- [ ] If hardware/tooling is unavailable, write \`UNVERIFIED — <exact blocker>\`; do not spend the remaining autonomous budget retrying an unchanged external prerequisite.
+
+### 17.5 Conditional iOS cleanup
+
+Only when genuine macOS/Xcode/signing/device prerequisites are present:
+
+- [ ] Verify the postprocessor fails certification if the generated \`Info.plist\` is missing/unparseable or lacks \`NSMotionUsageDescription\`.
+- [ ] Prefer structured plist editing over raw string insertion if the pinned Unity API supports it cleanly.
+- [ ] Correct the stale method/class reference in \`Assets/Plugins/iOS/IOS_BUILD_REQUIREMENTS.md\`.
+- [ ] Preserve generated plist/build evidence.
+
+Otherwise:
+
+- [ ] Leave these device/editor claims UNVERIFIED and do not expand Windows-only work into speculative iOS implementation.
+
+### 17.6 Re-audit acceptance gates
+
+Before M8.6 can close:
+
+- [ ] Every R1-R9 finding in \`audit.md\` has an explicit disposition and evidence.
+- [ ] Every new normative E1-E10 requirement in \`specs/device-readiness/spec.md\` is satisfied or explicitly UNVERIFIED only where an external platform prerequisite genuinely prevents execution.
+- [ ] All available pre-existing gates are rerun from final source state.
+- [ ] No false-green condition discovered in this re-audit remains in a certification wrapper.
+- [ ] The final executor report distinguishes fixes implemented from evidence actually executed.
+
