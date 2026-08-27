@@ -339,6 +339,7 @@ Validation on load must reject or repair impossible state:
 - Placement must be finite numbers.
 - Completed projects must resolve or be preserved through migration mapping.
 - Timestamps far in the future should be flagged for reconciliation.
+- M8.7 canonical-state repair (no schema bump): `SaveValidator` reconstructs a required null `RegionState` from its authoritative dictionary key (current or unlocked) or prunes an unreachable null entry; it normalizes `RegionState.regionId` to the dictionary key so storage identity is coherent; it prunes null `VitalityTransaction` elements without changing balance. `WorldState.GetOrCreateRegionState` self-heals an existing null value and `ProfileStateCopier` skips null history elements as a rollback-boundary defense. Repair never mints Vitality, completes projects, or awards milestones.
 
 Persistence health is itself a data contract (ADR 0007). Only `SaveLoadResult.Empty`
 may auto-create a fresh profile; `Failed`, `IncompatibleSchema`, and

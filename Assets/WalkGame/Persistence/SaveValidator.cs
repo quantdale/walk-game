@@ -7,7 +7,24 @@ namespace WalkGame.Persistence
     {
         public int FutureRestorationTimestampCount { get; internal set; }
 
-        public bool HasAnomalies => FutureRestorationTimestampCount > 0;
+        /// <summary>M8.7 (H1): null RegionState map values rebuilt from the authoritative key.</summary>
+        public int ReconstructedNullRegionStates { get; internal set; }
+
+        /// <summary>M8.7 (H1): unreachable null RegionState map entries removed.</summary>
+        public int PrunedUnreachableNullRegionStates { get; internal set; }
+
+        /// <summary>M8.7 (H2): RegionState.regionId values normalized to their dictionary key.</summary>
+        public int NormalizedRegionIdentityMismatches { get; internal set; }
+
+        /// <summary>M8.7 (H3): null recentVitalityTransactions elements removed.</summary>
+        public int PrunedNullTransactions { get; internal set; }
+
+        public bool HasAnomalies =>
+            FutureRestorationTimestampCount > 0 ||
+            ReconstructedNullRegionStates > 0 ||
+            PrunedUnreachableNullRegionStates > 0 ||
+            NormalizedRegionIdentityMismatches > 0 ||
+            PrunedNullTransactions > 0;
     }
 
     /// <summary>
@@ -88,9 +105,44 @@ namespace WalkGame.Persistence
                 }
             }
 
-            foreach (var regionPair in world.regionStates)
+            // M8.7 H1/H2: a parseable save can carry a null RegionState value or a
+            // RegionState whose regionId disagrees with its dictionary key. Both
+            // survive the old loop and later crash boot or create split canonical
+            // identity. The dictionary key is the authoritative storage identity.
+            foreach (var regionKey in new System.Collections.Generic.List<string>(world.regionStates.Keys))
             {
-                RepairRegion(regionPair.Value, clock, log, report);
+                if (!world.regionStates.TryGetValue(regionKey, out var region) || region == null)
+                {
+                    // A null/unreachable map entry is not recoverable state on its own.
+                    // If the key is required (current or unlocked) reconstruct exactly
+                    // that empty structural RegionState; otherwise prune it. No
+                    // progression can be recovered from a null value.
+                    if (regionKey == world.currentRegionId || world.unlockedRegionIds.Contains(regionKey))
+                    {
+                        log.Warning($"Reconstructed missing/null RegionState for required key '{regionKey}'.");
+                        region = new RegionState { regionId = regionKey };
+                        world.regionStates[regionKey] = region;
+                        report.ReconstructedNullRegionStates++;
+                    }
+                    else
+                    {
+                        log.Warning($"Removing unreachable null RegionState entry '{regionKey}'.");
+                        world.regionStates.Remove(regionKey);
+                        report.PrunedUnreachableNullRegionStates++;
+                        continue;
+                    }
+                }
+
+                // H2: the key is authoritative storage identity. A conflicting regionId
+                // is a corruption artifact; normalize it without inventing progression.
+                if (region.regionId != regionKey)
+                {
+                    log.Warning($"Region identity normalized: value.regionId '{region.regionId}' -> key '{regionKey}'.");
+                    region.regionId = regionKey;
+                    report.NormalizedRegionIdentityMismatches++;
+                }
+
+                RepairRegion(region, clock, log, report);
             }
 
             // Dedup stores are additive schema fields (campaign S8): repair explicit
@@ -100,6 +152,31 @@ namespace WalkGame.Persistence
             profile.activityState = activity;
             (activity.creditedIntervals ??= new CreditedActivityKeys()).Rebuild();
             (activity.creditedSessionIds ??= new CreditedActivityKeys()).Rebuild();
+
+            // M8.7 H3: the container-level repair above guarantees a non-null list,
+            // but a parseable save can still contain explicit null elements. Those
+            // survive into failed-commit rollback where ProfileStateCopier
+            // dereferences every element. Remove nulls without synthesizing a
+            // transaction or changing the canonical balance.
+            int removedNullTransactions = 0;
+            var compactedTransactions = new System.Collections.Generic.List<VitalityTransaction>();
+            foreach (var transaction in profile.recentVitalityTransactions)
+            {
+                if (transaction == null)
+                {
+                    removedNullTransactions++;
+                    continue;
+                }
+
+                compactedTransactions.Add(transaction);
+            }
+
+            if (removedNullTransactions > 0)
+            {
+                log.Warning($"Pruned {removedNullTransactions} null VitalityTransaction history element(s); no Vitality was minted.");
+                profile.recentVitalityTransactions = compactedTransactions;
+                report.PrunedNullTransactions += removedNullTransactions;
+            }
 
             return report;
         }

@@ -399,7 +399,17 @@ Stop and flag the conflict instead of improvising if:
 - A platform permission is being added without user-facing need.
 - A new feature materially expands scope beyond the current roadmap milestone.
 
-## 25. Immediate next work
+## 25. Git guards — first-push semantics (M8.7)
+
+`pre-push` and `check-remote-advance.sh/ps1` distinguish three remote-ref states via an exact `ls-remote` probe:
+
+- exact ref exists → fetch and require it an ancestor (reconciliation required otherwise);
+- exact ref positively absent → allow the first normal push of a new branch;
+- origin unqueryable (transport/auth) → fail closed, never treat as absent.
+
+Deletion and force-shaped pushes are always refused; the hook and both script twins share parity and are covered by local bare-remote fixtures in `Test-AgentGuards.ps1`.
+
+## 26. Immediate next work
 
 Until implementation begins, agents should follow `ROADMAP.md` from **Phase 0**.
 

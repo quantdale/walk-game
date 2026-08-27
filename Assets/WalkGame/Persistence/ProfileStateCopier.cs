@@ -49,6 +49,14 @@ namespace WalkGame.Persistence
             target.recentVitalityTransactions.Clear();
             foreach (var transaction in source.recentVitalityTransactions)
             {
+                // M8.7 H3: a null history element must never crash rollback. The
+                // validator already prunes these at load, but the rollback boundary
+                // is defense-in-depth: skip rather than dereference.
+                if (transaction == null)
+                {
+                    continue;
+                }
+
                 target.recentVitalityTransactions.Add(CopyTransaction(transaction));
             }
         }
@@ -74,6 +82,14 @@ namespace WalkGame.Persistence
             // scene actors hold those objects directly.
             foreach (var pair in source.regionStates)
             {
+                // M8.7 H1 defense-in-depth: a null region value must not crash the
+                // rollback copy. The load validator already removes/reconstructs
+                // these; skip any survivor so the boundary stays safe.
+                if (pair.Value == null)
+                {
+                    continue;
+                }
+
                 RegionState cloned;
                 if (!target.regionStates.TryGetValue(pair.Key, out cloned))
                 {

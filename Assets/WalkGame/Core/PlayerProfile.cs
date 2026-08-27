@@ -58,7 +58,11 @@ namespace WalkGame.Core
         {
             regionStates = regionStates ?? new Dictionary<string, RegionState>();
             regionId = regionId ?? string.Empty;
-            if (!regionStates.TryGetValue(regionId, out var regionState))
+            // M8.7 (H1/S3): a parseable save can carry an existing key whose value
+            // is null. TryGetValue returns true for a null value, so the original
+            // branch skipped creation and returned null. A "GetOrCreate" helper must
+            // never return null for a real key; self-heal the empty structural state.
+            if (!regionStates.TryGetValue(regionId, out var regionState) || regionState == null)
             {
                 regionState = new RegionState { regionId = regionId };
                 regionStates[regionId] = regionState;

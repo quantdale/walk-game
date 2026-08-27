@@ -30,8 +30,26 @@ while read -r local_ref local_oid remote_ref _remote_oid; do
         *) continue ;;
     esac
 
+    branch=${remote_ref#refs/heads/}
+
+    # M8.7 H5: distinguish three states instead of confounding an absent new
+    # branch with a transport/auth failure:
+    #   1. exact ref exists            -> fetch it and require it an ancestor;
+    #   2. exact ref is proven absent  -> a brand-new branch may be pushed normally;
+    #   3. origin cannot be queried    -> fail closed (refuse the push).
+    probe=$(git ls-remote --heads origin "refs/heads/$branch" 2>/dev/null)
+    if [ $? -ne 0 ]; then
+        echo "PRE-PUSH GUARD: could not query origin for $remote_ref (transport/auth); refusing push." >&2
+        exit 1
+    fi
+
+    if [ -z "$probe" ]; then
+        # Exact ref is positively absent: allow the first normal push of a new branch.
+        echo "PRE-PUSH GUARD: origin/$remote_ref does not exist; allowing first push." >&2
+        continue
+    fi
+
     if ! git fetch --quiet origin "$remote_ref" 2>/dev/null; then
-        # The push itself needs the network, so an unverifiable state here is a stop condition.
         echo "PRE-PUSH GUARD: could not fetch $remote_ref from origin to prove the race state; refusing push." >&2
         exit 1
     fi

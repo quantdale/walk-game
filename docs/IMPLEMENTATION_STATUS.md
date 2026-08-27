@@ -591,3 +591,121 @@ Playtest Readiness** — but it must run on a host with a licensed Unity editor 
 a physical step-counter Android device. If a measured exactly-once or performance blocker
 emerges only under a real editor/device, that measured blocker should drive a focused
 follow-up campaign.
+
+---
+
+## M8.7 Canonical State & Certification Integrity Closure
+
+**Status:** COMPLETE (all locally executable requirements closed; EDITOR/DEVICE/iOS tiers remain UNVERIFIED by the same environment blocker, not by missing repository work).
+**Planned-From:** `main@e78ba78` (authoritative main at campaign start).
+**Planner branch:** `agent/walk-game/m8.7-planner-20260827`.
+**Implementation branch:** `agent/walk-game/m8.7-exec-20260827`.
+**Milestone:** M8 — Device Ready.
+
+### Prior-session recovery (M8.6)
+
+- The prior M8.6 executor commit `d0c8687` was stranded off-origin because the tracked
+  pre-push guard refused the first push of a branch whose remote ref did not yet exist.
+- During this campaign the remote branch `agent/walk-game/m8.6-exec-20260826` (created
+  by the planner at `e78ba78`) was confirmed an ancestor of the local M8.6 branch, so the
+  stranded commit was pushed **normally** (fast-forward `e78ba78..d0c8687`) after the
+  remote-advance guard passed. No force-push was used.
+- The M8.6 harness work (R4/R6/R7/R17.2.10 fail-closed certification evidence, 35/35
+  `Test-CertificationScripts`) was merged into the M8.7 implementation branch so M8.6
+  equivalent fixes are preserved and verified, not assumed.
+
+### H1 — null current RegionState could crash boot (CLOSED)
+
+`WorldState.GetOrCreateRegionState` now self-heals an existing key whose value is null
+(H3/S3). `SaveValidator.RepairAndValidate` reconstructs a required null region (current
+or unlocked) from the authoritative key, or prunes an unreachable null entry. Boot-equivalent
+access (`EnsureRegionState` → `GetOrCreateRegionState`) no longer throws.
+
+- Regression: `M87SaveIntegrityClosureTests.H1_*` (3 cases).
+- `SaveValidationReport.ReconstructedNullRegionStates` / `PrunedUnreachableNullRegionStates` record counts.
+
+### H2 — region key / RegionState.regionId split identity (CLOSED)
+
+After repair, each surviving `regionStates` entry has a non-null `RegionState` whose
+`regionId` matches the dictionary key. The key is the authoritative storage identity; a
+conflicting `regionId` is normalized (no progression invented).
+
+- Regression: `M87SaveIntegrityClosureTests.H2_*` (2 cases) + `H2_NoSplitIdentityDownstream`.
+- `SaveValidationReport.NormalizedRegionIdentityMismatches` records counts.
+
+### H3 — null VitalityTransaction could crash rollback (CLOSED)
+
+`SaveValidator` prunes null `recentVitalityTransactions` elements and reports the count
+(`PrunedNullTransactions`). `ProfileStateCopier.CopyInto` additionally skips null
+history elements as a defense-in-depth rollback-boundary guard. A failed
+`PersistenceCoordinator.Commit` driven by a durable save containing a null transaction
+converges to `RevertedToLastKnownGood` without an unhandled exception; balance and valid
+entries are preserved, no Vitality is minted.
+
+- Regression: `M87SaveIntegrityClosureTests.H3_*` (3 cases).
+
+### H4 — structural invariant matrix (CLOSED)
+
+Every serializer-visible persisted family is now covered by an explicit regression
+(P6/S6): `PlayerProfile` root refs, `WorldState` current/unlocked/region map, `RegionState`
+sets/maps + building placement, `BuildingState`, `ProducerState`, `ActivitySyncState` dedup
+(rebuilt; `activeSession` legitimate null preserved), `AchievementState`, `PlayerSettings`,
+and `VitalityTransaction` list elements. `S7` confirms repair never mints progression.
+
+- Regression: `M87SaveIntegrityClosureTests.H4_StructuralInvariantMatrix_AllFamiliesClassified`
+  and `S7_RepairDoesNotMintProgression`.
+
+### H5 — first-push guard deadlocked on new branches (CLOSED)
+
+`.githooks/pre-push`, `scripts/check-remote-advance.sh` and `scripts/Check-RemoteAdvance.ps1`
+now distinguish three states: (1) exact ref exists → fetch and require it an ancestor;
+(2) exact ref is positively absent → allow the first normal push; (3) origin unqueryable
+(transport/auth) → fail closed. No force path, no deletion path was opened.
+
+- Scenario matrix (engine-free, local bare fixtures): contained remote → OK; unexpected
+  advancement → refuse; **first push to absent branch → allowed**; similarly-named branch
+  does not satisfy the exact ref; unreachable origin → fails closed. The PowerShell twin
+  (`Check-RemoteAdvance.ps1` + pre-push hook) passes every scenario. The real-repository
+  `sh scripts/check-remote-advance.sh` run on the new `agent/walk-game/m8.7-exec-20260827`
+  branch returned exit 0 (new-branch allowed) in genuine bash.
+- Regression: `scripts/Test-AgentGuards.ps1` H5 scenarios (S11c/S11d/S11e/S11h/S11i).
+
+### M8.7 certification matrix
+
+| Gate | Result | Evidence |
+| --- | --- | --- |
+| Repository identity (live) | PASS | `Assert-RepoIdentity.ps1` / `assert-repo-identity.sh` exit 0 before mutation and integration |
+| Domain suite | PASS | **224/224** (`dotnet test`; 213 baseline + 11 new M8.7 regressions) |
+| verify-domain.ps1 | PASS | same suite + restore check, exit 0 |
+| Unity static audit | PASS | **108 assets / 108 metas**, Unity 6000.3.4f1 pin (added `M87SaveIntegrityClosureTests.cs.meta`) |
+| Release hygiene / privacy audit | PASS | 63 runtime sources scanned, manifest minimal |
+| Agent guard suites — PowerShell twin | PASS | **all** scenarios including H5 first-push/advancement/unreachable/similar-branch + hook force/delete/unreachable |
+| Agent guard suites — sh twin | **ENV-BLOCKED** | pre-existing sandbox limitation: the `Git Bash` on PATH cannot `cd` into the working/temp paths in this environment (the very first suite run already showed `[sh] S1` failing before M8.7 changes). H5 logic is proven via the PowerShell twin and the real-repo `sh` check-remote-advance run; no repository defect is open. |
+| Certification-script regression | PASS | **35/35** (`scripts/Test-CertificationScripts.ps1`, M8.6 harness preserved) |
+| `git diff --check` | PASS | clean (CRLF normalization only) |
+| Unity import/compile (U1–U6) | **UNVERIFIED** | no licensed Unity `6000.3.4f1` editor installed |
+| EditMode / PlayMode | **UNVERIFIED** | same editor/license blocker |
+| Android IL2CPP/ARM64 build | **UNVERIFIED** | Android Build Support absent (editor not installed) |
+| Android lifecycle smoke | **UNVERIFIED (script ready)** | hardened `verify-android-smoke.ps1` in place + engine-free tested; no device/APK to run |
+| Physical step sensor / UX / performance / iOS | **UNVERIFIED** | no device / no macOS/Xcode/signing |
+
+### Deliberate remaining limitations (M8.7)
+
+- The only open gaps are the EDITOR / DEVICE / iOS tiers, blocked by the identical
+  environment absence (licensed Unity editor, Android Build Support, physical step-counter
+  device, macOS/Xcode/signing). No canonical-state, persistence, rollback, or guard
+  Critical/High defect remains. The M8.7 first-push deadlock that stranded M8.6 is itself
+  fixed.
+- The `sh` column of `Test-AgentGuards.ps1` is environmentally blocked in *this* sandbox
+  (documented above); it is not a regression of M8.7 work. On a host where Git Bash can
+  address the working tree, all `sh` scenarios (including H5) are expected to pass.
+
+### Next-campaign recommendation
+
+Because all discovered Critical/High canonical-state, integration, and guard-integrity
+findings are now closed and no executed tier exposes a release blocker, recommend
+**M9 Closed Playtest Readiness / Validation** — to be executed on a host with a licensed
+Unity `6000.3.4f1` editor and, ideally, a physical step-counter Android device. If a
+measured exactly-once, performance, build, or UX blocker emerges only under real
+hardware, that measured blocker should drive a focused follow-up campaign rather than a
+broad M9 expansion.

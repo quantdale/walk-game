@@ -14,9 +14,9 @@ Testing must therefore prioritize:
 
 ## 1A. Current campaign evidence
 
-As of 2026-08-27 (M8.5 runtime ownership & rollback fidelity, ADR 0011; M8.6 Unity first-import & device-readiness certification executed, re-audit R1-R9 hardening applied), `dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj`
-passes **213/213** and `scripts/verify-unity-static.ps1` passes the pinned Unity version,
-asset metadata, package invariants, and Bootstrap scene checks (107 assets/107 metas).
+As of 2026-08-27 (M8.7 canonical-state & certification-integrity closure, ADR 0007 amendment; M8.6 harness preserved), `dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj`
+passes **224/224** (213 baseline + 11 new M8.7 canonical-state regressions in `M87SaveIntegrityClosureTests`) and `scripts/verify-unity-static.ps1` passes the pinned Unity version,
+asset metadata, package invariants, and Bootstrap scene checks (108 assets/108 metas — added `M87SaveIntegrityClosureTests.cs` + meta).
 `scripts/verify-release-hygiene.ps1` adds a CI-runnable privacy/release audit (no GPS/save-path
 logging, Log-wrapper enforcement, minimal manifest). Player-facing state is covered by
 `PlayerExperienceTests`, exactly-once by `ActivityServiceTests` + `InterruptedSessionRecoveryTests`
@@ -61,6 +61,13 @@ no Android Build Support, no physical device, no macOS). The harness itself was 
   and confirmed.
 - New `scripts/Test-CertificationScripts.ps1` (engine-free, no Unity/adb/device) locks these
   semantics with **35/35** regression checks (up from 16/16) and is part of the local gate set.
+
+### M8.7 canonical-state & guard-integrity closure (AUTOMATED)
+
+M8.7 closed the parseable-save structural-integrity family and the first-push lost-update deadlock engine-free:
+
+- `SaveValidator` H1/H2/H3: null `RegionState` reconstruction/prune, `regionId` normalized to dictionary key, null `VitalityTransaction` prune (with `SaveValidationReport` counters); `WorldState.GetOrCreateRegionState` self-heals null values; `ProfileStateCopier` skips null history elements as a rollback-boundary defense. 11 focused regressions in `M87SaveIntegrityClosureTests` (H1 current/unreachable null, H2 key mismatch + no-split-identity, H3 prune + copier tolerance + failed-commit rollback, S8 round-trip/idempotence, H4 full structural matrix, S7 no-minting) plus the existing dirty-target/dedup tests. No Vitality is minted and no progression is fabricated; re-repair is idempotent.
+- H5 first-push guard: `pre-push`, `check-remote-advance.sh` and `Check-RemoteAdvance.ps1` now probe exact ref existence via `ls-remote` to distinguish absent branch (allow first push) from transport/auth failure (fail closed), while preserving ancestor/race, deletion, and no-force policy. `Test-AgentGuards.ps1` now covers first-push to absent branch, similar-name exact-ref, unreachable origin, and the existing contained/advanced/divergence cases (ps twin; sh twin environment-blocked in this sandbox, pre-existing, documented in IMPLEMENTATION_STATUS).
 
 Unity compile/EditMode/PlayMode, Android IL2CPP/ARM64 build, physical step-counter exactly-once,
 UX and performance/battery/thermal remain **UNVERIFIED** until a licensed editor and reference

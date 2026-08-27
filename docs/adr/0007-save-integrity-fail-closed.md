@@ -63,3 +63,10 @@ documented durability guarantees and application behavior:
   serialized-graph fidelity test enforces this (`SaveIntegrityApplicationTests`).
 - EDITOR-tier behavior of the blocked boot/recovery UI is committed but remains
   UNVERIFIED until a licensed editor run (see IMPLEMENTATION_STATUS).
+
+## M8.7 amendment — canonical-state structural repair (no schema bump)
+
+M8.7 covers a new defect family: schema-compatible JSON can carry null or identity-inconsistent elements that survive the validator and crash later boot or rollback.
+
+- **Decision:** `SaveValidator.RepairAndValidate` now deterministically repairs the full canonical graph without a schema bump: null `RegionState` values are reconstructed from the authoritative dictionary key when the key is required (current or unlocked) or pruned when unreachable; `RegionState.regionId` is normalized to the dictionary key so storage identity is coherent; null `VitalityTransaction` elements are pruned without changing `vitalityBalance`. `WorldState.GetOrCreateRegionState` self-heals an existing null value; `ProfileStateCopier` defensively skips null history elements on the rollback boundary. `SaveValidationReport` exposes counters for each repair. Repair never mints progression, completes projects, or awards milestones, and re-repair is idempotent with round-trip fidelity.
+- **Consequences:** Hand-edited or partially migrated saves that previously crashed boot (`GetOrCreateRegionState` returning null) or rollback (`CopyTransaction` NRE) now converge to a canonical structural shape or remain fail-closed only when truth cannot be reconstructed. The new `M87SaveIntegrityClosureTests` and the existing copier-fidelity tests lock this contract.

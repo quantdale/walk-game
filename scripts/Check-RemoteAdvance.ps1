@@ -38,13 +38,25 @@ $local = & git rev-parse -q --verify HEAD
 if (-not $local) { FailEnv 'no local commit' }
 
 Write-Host "fetching origin/$Branch for race check..."
+# M8.7 H5: an absent new branch must be positively distinguished from a
+# transport/auth failure. Query the exact ref first; only a confirmed absence
+# means "new branch", while a failed query fails closed.
+$probe = (& git ls-remote --heads origin "refs/heads/$Branch") 2>$null
+if ($LASTEXITCODE -ne 0) { FailEnv "could not query origin for '$Branch' (transport/auth)" }
+
+if (-not $probe) {
+    Write-Host "remote-advance OK: origin/$Branch does not exist yet (new branch)"
+    exit 0
+}
+
 & git fetch --quiet origin $Branch
 if ($LASTEXITCODE -ne 0) { FailEnv "could not fetch '$Branch' from origin" }
 
 $remote = (& git rev-parse -q --verify 'FETCH_HEAD') 2>$null
 if (-not $remote) {
-    Write-Host "remote-advance OK: origin/$Branch does not exist yet (new branch)"
-    exit 0
+    # ls-remote proved the ref exists, but the fetch produced nothing: treat as
+    # an environment failure rather than a missing branch.
+    FailEnv "origin/$Branch ref reported present but fetch yielded no commit"
 }
 
 & git merge-base --is-ancestor $remote $local 2>$null

@@ -31,6 +31,29 @@ $ZeroOid = ('0' * 40)
 $script:PassCount = 0
 $script:FailCount = 0
 
+function ToPosix([string]$Path) {
+    if (-not $Path) { return $Path }
+    # Git Bash in this sandbox can execute files at a drive-letter forward-slash
+    # Windows path (D:/a/b) when the process CWD is inherited, even though it
+    # cannot `cd` into such paths from a `bash -c` subshell.
+    return $Path.Replace('\\', '/')
+}
+
+# Runs a bash command with the working directory set to $Dir. The CWD is set
+# via Push-Location (pwsh) so the launched bash process INHERITS the working
+# directory. This matters because the sandbox Git Bash cannot `cd` into the
+# working paths from within a `bash -c` subshell, but it can operate when the
+# process is started with that directory already set (as the interactive tool
+# does). The command itself must not re-`cd`.
+function Invoke-BashIn([string]$Dir, [string]$Command) {
+    Push-Location $Dir
+    try {
+        & $BashExe -c "$Command" *> $null
+        return $LASTEXITCODE
+    }
+    finally { Pop-Location }
+}
+
 function Record([string]$Name, [bool]$Ok, [string]$Detail = '') {
     if ($Ok) {
         $script:PassCount++
@@ -42,7 +65,11 @@ function Record([string]$Name, [bool]$Ok, [string]$Detail = '') {
     }
 }
 
-$Tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("walk-game-guard-tests-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+# Fixtures live under the repo root rather than the user Temp directory: Git
+# Bash in some sandboxes cannot `cd` into the Windows Temp path, which would
+# make every [sh] scenario fail regardless of guard correctness.
+$Tmp = Join-Path $RepoRoot '.guard-sandbox'
+if (Test-Path $Tmp) { Remove-Item -LiteralPath $Tmp -Recurse -Force }
 New-Item -ItemType Directory -Path $Tmp | Out-Null
 
 $PwshExe = (Get-Process -Id $PID).Path
@@ -99,7 +126,9 @@ function Run-Guard {
         }
         else {
             $shDir = if ($ScriptDir) { $ScriptDir } else { $Dir }
-            & $BashExe (Join-Path $shDir 'scripts/assert-repo-identity.sh') @GuardArgs *> $null
+            $argStr = ($GuardArgs -join ' ')
+            $code = Invoke-BashIn $shDir "bash '$(ToPosix (Join-Path $shDir 'scripts/assert-repo-identity.sh'))' $argStr"
+            return $code
         }
         return $LASTEXITCODE
     }
@@ -120,12 +149,13 @@ function Run-Lock {
                 if ($Force) { $lockArgs += '-Force' }
                 & $PwshExe -NoProfile -File "$RepoRoot/scripts/WriterLock.ps1" @lockArgs *> $null
             }
-            else {
-                $lockArgs = @('release')
-                if (-not $Release) { $lockArgs = @('acquire') }
-                if ($Force) { $lockArgs += '--force' }
-                & $BashExe './scripts/writer-lock.sh' @lockArgs *> $null
-            }
+                else {
+                    $lockArgs = @('release')
+                    if (-not $Release) { $lockArgs = @('acquire') }
+                    if ($Force) { $lockArgs += '--force' }
+                    $code = Invoke-BashIn $Dir "./scripts/writer-lock.sh $(($lockArgs -join ' '))"
+                    return $code
+                }
             return $LASTEXITCODE
         }
         finally {
@@ -138,19 +168,47 @@ function Run-Lock {
 
 # Runs Check-RemoteAdvance (.ps1/.sh) with cwd inside $Dir. Returns exit code.
 function Run-RaceCheck {
-    param([string]$Impl, [string]$Dir)
+    param([string]$Impl, [string]$Dir, [string]$Branch = '')
     Push-Location $Dir
     try {
         if ($Impl -eq 'ps1') {
-            & $PwshExe -NoProfile -File "$RepoRoot/scripts/Check-RemoteAdvance.ps1" *> $null
+            $rcArgs = @()
+            if ($Branch) { $rcArgs = @('-Branch', $Branch) }
+            & $PwshExe -NoProfile -File "$RepoRoot/scripts/Check-RemoteAdvance.ps1" @rcArgs *> $null
         }
         else {
             # $Dir may be a plain clone without copied scripts; use the canonical script.
-            & $BashExe "$RepoRoot/scripts/check-remote-advance.sh" *> $null
+            $script = ToPosix "$RepoRoot/scripts/check-remote-advance.sh"
+            $b = if ($Branch) { " $Branch" } else { '' }
+            $code = Invoke-BashIn $Dir "bash '$script'$b"
+            return $code
         }
         return $LASTEXITCODE
     }
     finally { Pop-Location }
+}
+
+# Builds a clone whose identity (origin URL) reads as the canonical github slug
+# but whose git transport is transparently redirected to a local bare sandbox
+# repo via insteadOf. This lets the pre-push hook (which enforces identity)
+# talk to a reachable sandbox remote without any github egress.
+function New-HookFixture {
+    param([string]$Name, [string]$OriginPath)
+    $dir = Join-Path $Tmp $Name
+    git clone -q $OriginPath $dir
+    git -C $dir remote set-url origin 'https://github.com/quantdale/walk-game.git'
+    git -C $dir config "url.file://$OriginPath.insteadOf" 'https://github.com/quantdale/walk-game.git'
+    foreach ($f in ($FingerprintFiles + @('.repo-identity.json', 'ProjectSettings/ProjectVersion.txt'))) {
+        $src = Join-Path $RepoRoot $f
+        if (Test-Path $src) {
+            $dst = Join-Path $dir $f
+            New-Item -ItemType Directory -Path (Split-Path $dst -Parent) -Force | Out-Null
+            Copy-Item $src $dst -Recurse -Force
+        }
+    }
+    Copy-Item (Join-Path $RepoRoot 'scripts') (Join-Path $dir 'scripts') -Recurse -Force
+    Copy-Item (Join-Path $RepoRoot '.githooks') (Join-Path $dir '.githooks') -Recurse -Force
+    return $dir
 }
 
 $HaveBash = [bool]$BashExe
@@ -242,8 +300,7 @@ else {
     git -C $seed -c user.email=guard@fixture.local -c user.name=guard commit -q -m seed
     git -C $seed push -q $originPath main
 
-    $work = Join-Path $Tmp 'work'
-    git clone -q $originPath $work
+    $work = New-HookFixture 'work' $originPath
     git -C $work checkout -q -B main
     Set-Content -Path (Join-Path $work 'b.txt') -Value 'local work' -Encoding utf8NoBOM
     git -C $work add b.txt
@@ -265,22 +322,58 @@ else {
     Record '[ps1] S11b unexpected advancement detected' ((Run-RaceCheck 'ps1' $work) -eq 1)
     Record '[sh]  S11b unexpected advancement detected' ((Run-RaceCheck 'sh' $work) -eq 1)
 
-    # exercise the real pre-push hook with synthetic stdin (must refuse both cases)
+    # M8.7 H5: a brand-new branch whose exact ref does not exist on origin must
+    # be allowed by the race check (previously this deadlocked on the first push).
+    git -C $work checkout -q -B feat/fresh
+    Record '[ps1] S11c first push to absent branch allowed' ((Run-RaceCheck 'ps1' $work -Branch 'feat/fresh') -eq 0)
+    Record '[sh]  S11c first push to absent branch allowed' ((Run-RaceCheck 'sh' $work -Branch 'feat/fresh') -eq 0)
+    git -C $work checkout -q -B main
+
+    # M8.7 H5: a similarly named existing branch must NOT satisfy the exact ref.
+    git -C $work checkout -q -B agent/walk-game/m8
+    git -C $work push -q origin agent/walk-game/m8
+    git -C $work checkout -q -B main
+    git -C $work checkout -q -B agent/walk-game/m8x
+    Record '[ps1] S11d similar-name branch is not the exact ref (first push allowed)' ((Run-RaceCheck 'ps1' $work -Branch 'agent/walk-game/m8x') -eq 0)
+    git -C $work checkout -q -B main
+
+    # M8.7 H5: an unqueryable origin (transport/auth failure) must fail closed,
+    # never be mistaken for an absent branch.
+    $unreachable = Join-Path $Tmp 'unreachable'
+    git clone -q $originPath $unreachable
+    git -C $unreachable remote set-url origin 'https://github.com/quantdale/walk-game.git'
+    git -C $unreachable config 'url.file:///nonexistent-bare.git.insteadOf' 'https://github.com/quantdale/walk-game.git'
+    Record '[ps1] S11e unreachable origin fails closed (env error)' ((Run-RaceCheck 'ps1' $unreachable) -eq 2)
+    Record '[sh]  S11e unreachable origin fails closed (env error)' ((Run-RaceCheck 'sh' $unreachable) -eq 2)
+
+    # exercise the real pre-push hook with synthetic stdin.
     git -C $work fetch -q origin
     $remoteOid = (git -C $work rev-parse origin/main).Trim()
-    Push-Location $work
-    try {
-        ("refs/heads/main {0} refs/heads/main {1}" -f $localOid, $remoteOid) |
-            & $BashExe "$RepoRoot/.githooks/pre-push" *> $null
-        $hookBlocked = ($LASTEXITCODE -eq 1)
+    $hook = ToPosix "$RepoRoot/.githooks/pre-push"
+    $posixWork = ToPosix $work
+    ("refs/heads/main {0} refs/heads/main {1}" -f $localOid, $remoteOid) |
+        & $BashExe -c "cd '$posixWork' && bash '$hook'" *> $null
+    $hookBlocked = ($LASTEXITCODE -eq 1)
 
         ("refs/heads/main {0} refs/heads/main {1}" -f $ZeroOid, $remoteOid) |
-            & $BashExe "$RepoRoot/.githooks/pre-push" *> $null
+            & $BashExe -c "cd '$posixWork' && bash '$hook'" *> $null
         $deleteBlocked = ($LASTEXITCODE -eq 1)
-    }
-    finally { Pop-Location }
-    Record '[hook] S11c pre-push refuses force-shaped push' $hookBlocked
-    Record '[hook] S11d pre-push refuses remote deletion' $deleteBlocked
+
+        # M8.7 H5: first push to a genuinely absent branch must be allowed.
+        ("refs/heads/feat/brand-new {0} refs/heads/feat/brand-new {1}" -f $localOid, $remoteOid) |
+            & $BashExe -c "cd '$posixWork' && bash '$hook'" *> $null
+        $firstPushAllowed = ($LASTEXITCODE -eq 0)
+
+        # M8.7 H5: an unqueryable origin must refuse the push (not allow it).
+        git -C $work remote set-url origin 'https://github.com/quantdale/walk-game.git'
+        git -C $work config 'url.file:///nonexistent-bare.git.insteadOf' 'https://github.com/quantdale/walk-game.git'
+        ("refs/heads/feat/ghost {0} refs/heads/feat/ghost {1}" -f $localOid, $remoteOid) |
+            & $BashExe -c "cd '$posixWork' && bash '$hook'" *> $null
+        $unreachableRefused = ($LASTEXITCODE -eq 1)
+    Record '[hook] S11f pre-push refuses force-shaped push' $hookBlocked
+    Record '[hook] S11g pre-push refuses remote deletion' $deleteBlocked
+    Record '[hook] S11h pre-push allows first push to absent branch' $firstPushAllowed
+    Record '[hook] S11i pre-push refuses when origin unqueryable' $unreachableRefused
 
     # S12: structural proof that nothing left the sandbox. GIT_ALLOW_PROTOCOL=file
     # (set at suite start) makes any non-file transport fail loudly, so a passing
