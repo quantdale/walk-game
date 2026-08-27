@@ -2,6 +2,16 @@
 
 This directory is the canonical specification surface for implementation campaigns planned after the M8.4 hardening cycle.
 
+## Current active change
+
+- **M8.8 — Pre-Playtest Integrity & Unity Bring-Up Closure**
+- Canonical package: `openspec/changes/m8.8-pre-playtest-integrity-and-unity-bringup/`
+- Planned from: `main@cf260d04fefbb2d5e7da265de5ae03a9aa768a0a`
+- Executor adapter: `.agent/EXECUTION_PROMPT.md`
+- Autonomous work budget: up to 12 hours.
+
+M8.7 remains COMPLETE. M9 Closed Playtest Readiness is intentionally gated behind M8.8 because the current audit found confirmed Editor semantic-compilation and save-migration defects plus a missing standalone semantic-compile evidence gate.
+
 ## Change layout
 
 Each active change lives under `openspec/changes/<change-id>/` and SHOULD contain:
@@ -30,6 +40,8 @@ Only one implementation campaign should be ACTIVE unless the repository instruct
 Do not mark a task complete because an earlier report said it passed. The executing session must produce fresh evidence for every locally available gate. Unity editor, Android build/device, iOS/Xcode, signing, UAC/elevation, and physical-performance tiers remain honestly `UNVERIFIED` when the environment cannot run them.
 
 Do not convert unavailable hardware validation into a code-only claim. Do not bypass repository identity or writer-lease rules.
+
+Semantic Unity compilation is a distinct evidence tier from `verify-unity-static.ps1`. A structurally valid tree does not prove Editor/runtime assemblies compile.
 
 ## Change authority
 
