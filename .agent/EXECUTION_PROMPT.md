@@ -1,134 +1,319 @@
-# Execution Prompt — M8.8 Minimal Blocker-Closure Sequence
+# Execution Prompt — M8.8 Re-Audited Pre-Playtest Completion Campaign
 
 Status: ACTIVE
-Canonical OpenSpec: `openspec/changes/m8.8-pre-playtest-integrity-and-unity-bringup/`
-Sequence baseline: `main@0c710e70e8348e4b2cb57b92bd0878283a6e6c49`
-Repository: `quantdale/walk-game`
+Repository: quantdale/walk-game
+Re-audited baseline: main@95606565c44b7bab04e434856ad9cd65dbefd101
+Canonical OpenSpec: openspec/changes/m8.8-pre-playtest-integrity-and-unity-bringup/
+Autonomous objective: drive the one-region MVP as close as realistically possible to full functional, device, release, and production readiness in one long session
+
+## Read first
+
+Read, in order:
+1. AGENTS.md
+2. .agent/PLANNER_HANDOFF.md
+3. this file
+4. openspec/changes/m8.8-pre-playtest-integrity-and-unity-bringup/reaudit-2026-08-28.md
+5. openspec/changes/m8.8-pre-playtest-integrity-and-unity-bringup/specs/pre-playtest-integrity/spec.md
+6. openspec/changes/m8.8-pre-playtest-integrity-and-unity-bringup/specs/pre-playtest-integrity/revision-2026-08-28.md
+7. openspec/changes/m8.8-pre-playtest-integrity-and-unity-bringup/tasks-revision-2026-08-28.md
+8. the remaining M8.8 proposal/design/tasks
+9. current implementation/status/testing/mobile/privacy/architecture/data docs and applicable ADRs.
+
+The 2026-08-28 re-audit and normative revision supersede conflicting older M8.8 current-state claims and task ordering. Carry forward all non-conflicting requirements.
 
 ## Mission
 
-Close M8.8 using the smallest dependency-ordered execution sequence that can produce trustworthy pre-playtest evidence. Do not expand into M9, optional polish, speculative platform rewrites, or unrelated hardening.
+Execute a combined implementation + hardening campaign. Do not start M9 and do not expand feature breadth until pre-playtest integrity is trustworthy.
 
-The confirmed defects are:
+At planning time, the highest-value known work is:
 
-- **H1:** `WalkGameEditorTools.cs` lacks the namespaces required for `GraphicsSettings` and `IPostprocessBuildWithReport`.
-- **H2:** `SaveMigrator.TryMigrateToCurrent` can return true while the schema remains below `SaveSchemaVersions.Current`.
-- **H3:** no dedicated fail-closed semantic Unity import/compile gate protects the repository from H1-class false greens.
-- **H4:** clean-checkout URP/project state has not been proven reproducible.
+P1 HIGH:
+- current main CI red: Test-AgentGuards 42/43, real-hook S11h fixture fails;
+- Editor semantic compile namespace blocker;
+- SaveMigrator false-success below Current;
+- missing standalone semantic Unity compile/import gate;
+- incomplete clean-checkout Unity/package/project/URP provenance;
+- Android build target fixed at API 35 even though new Play submissions require API 36 starting 2026-08-31;
+- no reproducible tracked iOS Xcode/build certification path for the MVP.
 
-The Android denial-after-restart and iOS provider-lifetime concerns are **unverified risks**, not confirmed defects. Reproduce them before changing platform behavior.
+P2:
+- Android denial classification after process restart: reproduce before changing behavior;
+- iOS static callback/provider lifetime: source-test then certify under IL2CPP/AOT;
+- successful Vitality spend can carry empty reason;
+- canonical reward arithmetic can overflow;
+- some procedural Material creation lacks final null-shader protection;
+- physical performance/battery/touch/accessibility remains unverified.
 
-## Non-negotiable evidence rule
+Do not treat these planning-time facts as fresh executor evidence. Reproduce the relevant baseline after reconciling current main.
 
-Maintain one evidence ledger throughout execution. Every result must be exactly one of:
+## Evidence discipline
 
-- **VERIFIED PASS:** freshly executed against the recorded source SHA, with command/scenario, environment, and artifact/log identity.
-- **VERIFIED FAIL:** freshly reproduced against the recorded source SHA, with minimal reproduction and captured failure.
-- **UNVERIFIED:** not executed because a named prerequisite is absent or the tier was not reached.
-- **HISTORICAL:** prior evidence used only as context.
+Every claim must be one of:
+- VERIFIED PASS: freshly executed against recorded current source with tool/environment/artifact identity;
+- VERIFIED FAIL: freshly reproduced with minimum reproduction and captured evidence;
+- UNVERIFIED: not executed because a named prerequisite is absent or the lane was not reached;
+- HISTORICAL: earlier evidence used only for context.
 
-Never convert static inspection, fixture tests, historical counts, an earlier tier, or lack of reproduction into a runtime PASS. Never call an unexecuted risk a defect. A source-only test may verify a state machine but is not physical-device evidence.
+STATIC does not imply EDITOR-COMPILE.
+EDITOR-COMPILE does not imply EDITMODE.
+EDITMODE does not imply PLAYMODE.
+PLAYMODE does not imply BUILD.
+BUILD does not imply DEVICE.
+EMULATOR does not imply PHYSICAL STEP SENSOR.
+SOURCE iOS tests do not imply IL2CPP/AOT device behavior.
 
-## Startup — one short preflight
+## Startup
 
-1. Read `AGENTS.md`, `.agent/PLANNER_HANDOFF.md`, this prompt, and the M8.8 OpenSpec.
-2. Prove repository identity. Synchronize from current remote `main`; inspect commits after the sequence baseline and preserve equivalent newer work.
-3. Work on local `main` as required by the active planning workflow, acquire the writer lease, and record start SHA, dirty state, Unity/editor/build-support availability, Android device/API level, and macOS/Xcode/iOS-device availability.
-4. Run the currently available headless baseline once:
-   - `dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj`
-   - `./scripts/verify-domain.ps1`
-   - `./scripts/verify-unity-static.ps1`
-   - `./scripts/verify-release-hygiene.ps1`
-   - `./scripts/Test-AgentGuards.ps1`
-   - `./scripts/Test-CertificationScripts.ps1`
-   - `git diff --check`
-5. Record fresh results; label unavailable editor/device tiers UNVERIFIED and continue. Do not spend time rerunning an unchanged external blocker.
+1. Prove exact repository identity. Stop on mismatch.
+2. Fetch current origin/main. Inspect every commit after the re-audited baseline and preserve equivalent newer work.
+3. Follow AGENTS.md one-writer/branch/worktree policy and acquire the writer lease before mutation.
+4. Record start SHA, branch/worktree, dirty state and lease identity.
+5. Inventory actual toolchain:
+   - Unity 6000.3.4f1 editor and license;
+   - Android Build Support, SDK/platform/build-tools/NDK/JDK/adb;
+   - Android device/emulator, OS/API and step-counter capability;
+   - macOS, Xcode, iOS SDK, signing and iOS device.
+6. Run the full currently executable headless baseline once:
+   - dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj
+   - scripts/verify-domain.ps1
+   - scripts/verify-unity-static.ps1
+   - scripts/verify-release-hygiene.ps1
+   - scripts/Test-AgentGuards.ps1
+   - scripts/Test-CertificationScripts.ps1
+   - git diff --check
+7. Record exact fresh counts/failures. Do not reuse the planning-time 224/224 or 42/43 as current proof.
 
-## Execution sequence
+## Dependency-ordered execution
 
-Complete each stage before advancing. If a stage exposes a blocker that invalidates later stages, fix it and rerun only the affected gate.
+### Stage 0 — Restore CI evidence integrity
 
-### Stage 1 — Close the deterministic confirmed source defects
+Fix the guard fixture before trusting the workflow as a campaign gate.
 
-1. Fix H1 using the actual Unity namespaces or fully qualified API names. Do not use reflection, text-check exceptions, or suppression.
-2. Fix H2 so:
-   - success implies `profile.schemaVersion == SaveSchemaVersions.Current`;
-   - v0, negative, and future schemas fail closed unless a real migration exists;
-   - each migration step advances exactly as designed or fails;
-   - unknown lower material is never relabeled as current.
-3. Add focused regression tests for current, zero, negative, future, missing-step, no-progress, backward, and version-jump migration cases.
-4. Run only the focused tests plus domain verification needed to prove H2. H1 remains source-fixed but semantic status stays UNVERIFIED until Stage 2.
+Reproduce S11h through the real pre-push hook. Confirm whether url.*.insteadOf causes git remote get-url origin to return the local file transport and therefore makes assert-repo-identity reject the fixture before the intended branch-race logic.
 
-**Exit:** H2 is freshly VERIFIED PASS; H1 is patched and awaiting semantic proof. Do not perform optional numeric, Vitality-reason, shader, UX, or performance work unless a gate in this sequence directly exposes it as a blocker.
+Repair the fixture/test seam, not the production security invariant. Keep all test egress local.
 
-### Stage 2 — Add semantic compile evidence, then prove clean-checkout/URP reproducibility
+Strengthen hook scenarios so each negative case proves its intended rejection reason/path; a generic identity failure must not satisfy a force/delete/unreachable-race test.
 
-1. Add one dedicated semantic Unity import/compile wrapper for pinned Unity `6000.3.4f1`. It must:
-   - fail on wrong editor identity, launch/import/compiler errors, or stale evidence;
-   - bind evidence to source SHA and dirty state;
-   - preserve a fresh full editor log and concise machine-readable result;
-   - report unexpected tracked mutation;
-   - have fixture tests for success, compiler failure, launch failure, wrong version, stale log/evidence, and unexpected mutation.
-2. Run wrapper fixture tests. These verify wrapper semantics only; label real Unity compilation UNVERIFIED until Unity runs.
-3. If the pinned licensed editor is available, use a disposable clean checkout/worktree at the recorded SHA:
-   - run semantic import/compile before project setup;
-   - capture the exact first-import diff;
-   - run the repository project setup;
-   - capture generated URP/project state;
-   - run setup a second time and prove idempotence;
-   - track stable editor-generated canonical state if required, or formally bind deterministic generated-state hashes/diffs into evidence;
-   - never hand-author opaque Unity serialized assets;
-   - rerun semantic compile from a second clean checkout of the resulting source.
-4. Sweep all Unity assemblies after the first compile error; do not stop with H1 if additional semantic failures appear.
+Run all identity, writer-lock, remote-advance, PowerShell, shell and hook cases.
 
-**Exit:** H1 and H3 are VERIFIED PASS only after a real fresh semantic compile. H4 is VERIFIED PASS only after clean-checkout generation/provenance and second-run idempotence are proven. Without licensed pinned Unity, H1 source fix and wrapper fixtures may pass, but H1 semantic proof and H4 remain UNVERIFIED with one precise environment blocker.
+Exit Stage 0 only when the guard suite is 100% green in the executor environment or an exact environment blocker is documented. Do not proceed to final certification with required CI red.
 
-### Stage 3 — Reproduce the two platform risks; change code only on VERIFIED FAIL
+### Stage 1 — Close deterministic source/release blockers
 
-#### Android denial/restart
+H1 Editor:
+- add actual namespace/qualification for GraphicsSettings and IPostprocessBuildWithReport;
+- no reflection, suppression, or allowlist.
 
-Run on a real supported Android target when available:
+H2 migration:
+- true must imply exact Current;
+- v0, negative and unsupported lower fail closed unless a real migration exists;
+- forward schema fails closed;
+- every migration step advances exactly as specified or fails;
+- add current/lower/negative/future/missing-step/no-progress/backward/jump tests;
+- test through real save/load policy.
 
-1. fresh install with permission undecided;
-2. deny permission;
-3. force-stop/kill the process;
-4. relaunch and observe refresh state before requesting again;
-5. request again and verify prompt/rationale behavior is bounded;
-6. change permission in Settings, relaunch, and refresh;
-7. capture API level, app/source SHA, log, observed native result, refined C# result, and prompt count.
+Android target:
+- change release-shaped target from API 35 to API 36 or later;
+- update assertions/docs;
+- prove the generated build cannot silently target below the Play requirement;
+- preserve minSdk only by deliberate supported-device policy.
 
-If VERIFIED FAIL, make the smallest correction preserving exactly-once activity credit and add deterministic regression coverage before rerunning the device scenario. If no suitable device/build exists, mark the physical scenario UNVERIFIED; do not infer PASS from mocks or source review.
+Canonical hardening:
+- require non-empty successful Vitality spend reason before mutation;
+- eliminate unchecked canonical resource/score wraparound with explicit tested policy;
+- null-guard cheap Shader.Find -> Material paths where unambiguously safe;
+- keep normal authored Ashfall behavior unchanged.
 
-#### iOS provider lifetime
+Run focused tests, then full engine-free domain verification.
 
-First add or run the smallest deterministic source-level lifecycle harness covering pending history query, shutdown/recomposition, late callback, live-session stop, provider generation, and exactly-once completion. Then, only with macOS/Xcode/signing/device available, reproduce under IL2CPP/AOT and capture callback/delegate lifetime evidence.
+Exit: all deterministic engine-free changes are freshly green. H1 remains semantically UNVERIFIED until Stage 2 if Unity did not run.
 
-If VERIFIED FAIL, make the smallest ownership/lifetime fix consistent with ADR 0011, extend the regression harness, and rerun. Without the Apple toolchain/device, source-level invariants may be VERIFIED PASS while runtime iOS remains UNVERIFIED.
+### Stage 2 — Establish real Unity semantics and reproducible clean checkout
 
-**Exit:** each risk is either runtime VERIFIED PASS, reproduced/fixed/reverified, or explicitly UNVERIFIED. Lack of reproduction is never permission for a speculative rewrite.
+Add a dedicated fail-closed semantic compile/import verifier for exact Unity 6000.3.4f1.
 
-### Stage 4 — Lock the regressions and certify the final source
+It must:
+- bind source SHA and dirty state;
+- bind exact editor identity;
+- remove/uniquely identify stale evidence;
+- preserve a full fresh editor log;
+- fail on launch/import/compiler errors;
+- prove completion rather than only process exit;
+- report unexpected tracked/untracked canonical mutation;
+- emit machine-readable evidence;
+- have engine-free fixtures for wrong version, launch failure, compiler error, stale/missing evidence and mutation false greens.
 
-1. Add new regression gates to CI/current verification routing:
-   - migration invariant tests;
-   - semantic-wrapper fixture tests;
-   - real semantic compile gate where a licensed Unity runner exists;
-   - deterministic Android denial/restart state-machine tests;
-   - deterministic iOS callback/provider-lifetime tests.
-2. Confirm every gate is fail-closed and cannot accept missing, stale, wrong-SHA, wrong-editor, or wrong-target evidence.
-3. From final source, rerun the complete available baseline list from Startup plus all new focused gates.
-4. If Unity is available, run semantic compile, then EditMode and PlayMode. Run Android build/device and iOS tiers only when their real prerequisites exist. Keep each tier separate.
-5. Update the M8.8 OpenSpec tasks and evidence-bearing docs with the exact final ledger. Do not rewrite historical evidence as fresh.
-6. Mark this prompt COMPLETE only when all locally executable requirements pass, all confirmed source blockers are closed, unavailable tiers remain honestly UNVERIFIED, and no new Critical/High blocker is known.
+If genuine pinned Unity is available:
+1. use a disposable clean checkout at recorded source;
+2. semantic compile before setup;
+3. capture first-import diff;
+4. run ApplyProjectSetup;
+5. capture package/project/URP changes;
+6. materialize stable Unity-generated canonical state, including Packages/packages-lock.json and required ProjectSettings/URP assets where appropriate;
+7. never hand-author opaque Unity serialized state;
+8. run setup a second time and prove idempotence;
+9. create a second clean checkout of resulting source;
+10. run semantic compile again;
+11. sweep every assembly after the first compiler error;
+12. run EditMode and PlayMode only after compile is green.
 
-## Stop conditions
+If licensed Unity is unavailable, finish wrapper/source work and record exact UNVERIFIED blocker once. Continue to other executable lanes.
 
-Stop and report the exact blocker if repository identity fails, the writer lease is held by another session, remote `main` advances incompatibly, or publication is rejected. Do not force-push, overwrite competing work, weaken a gate, fabricate evidence, or retry unchanged external prerequisites.
+### Stage 3 — Android API 36 build, lifecycle, permission, and exactly-once certification
+
+With Android Build Support:
+- build IL2CPP ARM64 using API 36;
+- record source SHA, Unity version, SDK/build tools, targetSdk, APK/AAB hash;
+- verify actual generated targetSdk is 36+;
+- run deterministic selected-target install/launch/background/resume/rotation/force-stop/relaunch smoke;
+- prefer Android 16 coverage.
+
+Permission denial/restart:
+- fresh install undecided;
+- deny;
+- process death/force-stop;
+- relaunch and inspect native/refined permission before request;
+- request again and prove bounded/non-stacked behavior;
+- Settings grant/revoke and relaunch;
+- capture OS/API/source/app/log and prompt count.
+
+Reproduce before provider rewrite. If VERIFIED FAIL, implement the narrowest fix and add a deterministic state-model regression.
+
+Physical step target:
+- require real step-counter capability;
+- verify passive polling + Expedition + save/reload + process restart cannot credit the same movement twice;
+- preserve staged commit/resolve ownership.
+
+Do not call emulator lifecycle proof physical movement proof.
+
+### Stage 4 — iOS reproducible build and lifetime certification
+
+Implement the missing reproducible iOS path even if Apple hardware is absent:
+- Unity method/entry point to generate the Xcode project deterministically;
+- canonical iOS bundle/project settings;
+- macOS-oriented build/cert wrapper that records source SHA, Unity, Xcode, SDK and output;
+- source-level lifecycle harness for pending historical query, shutdown/recomposition, late callback, live stop and provider generation;
+- explicit managed callback retention intent for IL2CPP/AOT where required.
+
+With genuine Apple prerequisites:
+- use Xcode 26 or later and iOS 26 SDK or later;
+- generate Xcode project;
+- verify CoreMotion and NSMotionUsageDescription;
+- build/sign/install;
+- exercise permission, historical query, live session, background/resume, shutdown/relaunch and late callbacks;
+- preserve artifacts/logs/device identity.
+
+No macOS/signing/device means runtime iOS remains UNVERIFIED. Do not fabricate a PASS and do not commit secrets.
+
+### Stage 5 — User-facing hardening and measured performance
+
+Where hardware exists, run the major vertical-slice journeys end-to-end:
+- onboarding/permission-denied fallback;
+- movement/Vitality;
+- restoration;
+- production/offline summary;
+- builder placement and persistence;
+- Builder -> Explore synchronization;
+- Expedition start/stop/recovery;
+- save corruption/recovery paths where safe in test profile.
+
+Check:
+- safe areas/orientation;
+- touch target usability/readability;
+- basic accessibility;
+- Builder and Explore frame times;
+- region transition timing;
+- Expedition battery/thermal sanity.
+
+Fix measured material defects and add regression coverage. Do not perform speculative broad optimization.
+
+### Stage 6 — Final release certification
+
+From final source rerun every available gate:
+- repository identity;
+- domain suite;
+- verify-domain;
+- Unity static;
+- release hygiene;
+- Test-AgentGuards 100%;
+- Test-CertificationScripts;
+- semantic-wrapper fixtures;
+- all new focused regressions;
+- git diff --check;
+- semantic Unity compile;
+- EditMode;
+- PlayMode;
+- Android API 36 IL2CPP ARM64 build/smoke/device;
+- iOS Xcode/build/device if available.
+
+Also verify:
+- clean second-checkout reproducibility;
+- package/project/URP state explainable and clean;
+- no accidental secrets/debug files;
+- final GitHub Actions workflow green;
+- documentation matches fresh evidence exactly.
+
+Add a regression for every material defect discovered during execution.
+
+## Scope constraints
+
+Do not add:
+- Region 2;
+- cloud/accounts/social/multiplayer;
+- Health Connect/HealthKit;
+- analytics/backend rollout;
+- broad art/UI redesign;
+- unrelated package upgrades;
+- economy/content expansion;
+- speculative optimization without measurement.
+
+Do not weaken:
+- exactly-once movement;
+- fail-closed persistence/quarantine;
+- offline-first behavior;
+- passive steps without GPS;
+- repository identity/writer/race guards;
+- safe Git history.
+
+## Long-session policy
+
+Continue automatically while legitimate in-scope work remains, up to the session budget.
+
+Start with blockers and dependency-critical work.
+Validate after meaningful milestones.
+Repair introduced Critical/High regressions immediately.
+Do not stop after the first successful source fix.
+Do not repeatedly retry an unchanged external prerequisite.
+If implementation work is complete, continue into hardening.
+If hardening is complete, continue into regression hunting, performance/UX review, security/privacy sanity, release certification, documentation synchronization and repository cleanup.
+Stop only when additional work would be external, speculative, low-value, or outside the intended one-region MVP.
+
+## Completion claims
+
+M8.8 COMPLETE:
+- all locally executable requirements are closed;
+- no known P0/P1 blocker remains;
+- current required CI is green;
+- unavailable external tiers are precisely UNVERIFIED.
+
+FULL MVP PRODUCTION-CERTIFIED is stricter:
+- genuine clean-checkout Unity semantic evidence;
+- Android API 36 release-shaped device evidence;
+- genuine iOS Xcode 26+iOS 26 SDK build/sign/install/device evidence;
+- major user journeys;
+- measured performance/thermal/touch/accessibility;
+- no known P0/P1 defect.
+
+Do not conflate the two.
 
 ## Final publication
 
-1. Recheck remote advancement and reconcile safely.
-2. Commit all intended work on local `main` with a detailed multi-line session report.
-3. Push normally to remote `main`; verify remote `main` contains the final commit and local `main` has no unpushed campaign commits.
-4. Report final remote SHA and the evidence ledger, grouped as VERIFIED PASS, VERIFIED FAIL, UNVERIFIED, and HISTORICAL.
-5. Recommend M9 only if no confirmed Critical/High blocker remains. A newly measured blocker takes priority over M9.
+1. Update M8.8 OpenSpec/task evidence and implementation/testing docs.
+2. Change this prompt to COMPLETE only when the M8.8 completion definition is actually satisfied.
+3. Record start/reconciled/final SHAs, branch/worktree/lease, exact environment, every finding disposition, fresh counts, artifacts, external blockers and remaining risks.
+4. Recheck remote advancement and reconcile deliberately.
+5. Commit a detailed full-session report.
+6. Push normally. Never force-push or delete remote refs.
+7. Verify remote contains the final commit and required CI is green.
+8. Recommend M9 only if no measured pre-playtest blocker remains. Otherwise the next campaign targets the measured blocker.
