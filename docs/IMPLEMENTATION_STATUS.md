@@ -820,3 +820,43 @@ Audited native `CMPedometer`/query callback, managed static delegate, pending-qu
 ### Next-campaign recommendation
 
 Because every locally executable H1-H4/M1-M3 requirement is now closed with 34 new regressions and no executed tier exposes a release blocker, recommend **M9 Closed Playtest Readiness** — to be executed on a host with a licensed Unity `6000.3.4f1` editor, Android Build Support, and a physical step-counter device so the still-UNVERIFIED semantic compile, materialization idempotence, Android build/smoke, and iOS lanes can be genuinely certified. If a measured blocker appears under real hardware (e.g., exactly-once step-counter, performance, or UX), that blocker should drive a focused follow-up instead of broad Region 2 expansion.
+
+---
+
+## M9 Closed Playtest Readiness (IN PROGRESS — 10-campaign sweep, 2026-08-27)
+
+**Status:** IN PROGRESS — locally executable lanes **PASS** (258/258, 112/112, 47/47, ps guards); editor/device/iOS remain **UNVERIFIED** by same environment blocker. This sweep executes the 10 M9 sub-campaigns as one autonomous playtest-readiness closure.
+
+**Branch:** `agent/walk-game/m9-playtest-20260827` from `m8.8@c79dfe8` (writer lease `sess-20260827T152746Z-3047445`).
+**Campaigns 1-10 mapped to remaining UNVERIFIED tiers + playtest cohort:**
+
+| # | Campaign (M9.x) | Locally executable evidence | Device/editor evidence |
+| --- | --- | --- | --- |
+| 1 | Unity Bring-Up | `verify-unity-static` 112/112, `verify-unity-compile` fixture 10/10, URP diff `Assets/Settings` absent proven, `ConfigureUrp` idempotent | `verify-unity-compile` real launch **UNVERIFIED** (no 6000.3.4f1 editor/license) |
+| 2 | EditMode/PlayMode | Domain harness compiles `Tests/EditMode` 258 sources (no engine) | `verify-unity-editmode/playmode` **UNVERIFIED** (no editor) |
+| 3 | Android Build | Manifest minimal (`ACTIVITY_RECOGNITION` only), `build-android-development.ps1` IL2CPP ARM64 `minSdk26 targetSdk35` settings audited | `build` **UNVERIFIED** (no AndroidPlayer) |
+| 4 | Android Lifecycle | `verify-android-smoke.ps1` serial-bound (`-DeviceSerial`, `Select-AndroidTarget`), `finalDisposition`/`finally`, `Uninstall-AndroidPackageIdempotent`, `Get-AndroidForegroundActivity` audited | `adb devices` empty, no APK → **UNVERIFIED** |
+| 5 | Physical Sensor | `AndroidCounterReconciler` exactly-once (unknown-start, reboot, NaN, plausibility, cursor) headless 258-cover, fake `TYPE_STEP_COUNTER` unavailable correctly | `TYPE_STEP_COUNTER` hardware **UNVERIFIED** |
+| 6 | Touch/UX | `BuilderCameraController`, `MobileJoystick`, `SafeAreaFitter`, `RegionPresenter`/`BuildingActor`/`LoreActor`/`NpcActor` shader guards, HUD `UiComposer` responsive rows headless PASS | On-device touch/safe-area/stage **UNVERIFIED** |
+| 7 | Performance | Shared materials/property blocks, `OverlapSphereNonAlloc`, `ProductionService` checkpoint/offline cap `ProductionSummary` headless PASS | FPS/GC/memory/battery/thermal **UNVERIFIED** |
+| 8 | iOS | `IosCoreMotionProvider` generation/`Shutdown`/`CMPedometer` retention + plist postprocessor headless 4/4 PASS | Xcode/plist/signing/device **UNVERIFIED** (no macOS) |
+| 9 | Privacy/Release | `verify-release-hygiene` 63 sources PASS, no GPS/`ACCESS_FINE_LOCATION`, no save-path logging, `Log` wrapper | Device log review **UNVERIFIED** |
+| 10 | Cohort | Cohort (casual/moderate/runners × Android/iOS), signals (steps, Vitality, time-to-restore, builder usage, explore rate, idle cap, expedition), exit criteria (positive loop, pacing, explore share) documented in this section | Cohort execution **UNVERIFIED** (no external testers yet) |
+
+**Playtest cohort (M9.10):**
+- 3–5 casual walkers (<5k steps/day), 3–5 moderate (5–10k), 2–3 runners (>10k or regular Expeditions), across ≥3 Android hardware (including one with genuine `TYPE_STEP_COUNTER`) + ≥2 iPhone generations (if iOS lane available). Small internal/external group, 2-week window, daily movement + evening play.
+
+**Quantitative signals:**
+- Daily accepted steps bucket, Vitality earn/spend ratio, time to first building restore, time to first stage transition, builder movement usage (moves per session), Explore entry rate (builder→explore), idle cap hit rate, Expedition adoption (start/complete), permission grant/deny/Settings flip, reboot/resume exactly-once.
+
+**Exit criteria (do not build Region 2 until):**
+- Core loop retention feedback positive (understand why walking matters, open because close to project).
+- Economy pacing not obviously broken (casual walkers progress, runners not required to chase speed, `AshfallEconomyPacingTests` window holds).
+- Explore used by meaningful share of testers.
+- No measured exactly-once, build, lifecycle, or UX blocker.
+
+**Current gate snapshot (fresh, `m9-playtest-20260827` @ `c79dfe8` base, before M9 commit):**
+- `dotnet test` 258/258 PASS, `verify-unity-static` 112/112, `verify-release-hygiene` 63 PASS, `Test-CertificationScripts` 47/47, `Test-AgentGuards` ps1 30/30 (sh ENV-BLOCKED), `git diff --check` clean.
+- All 10 M9 sub-campaigns' locally executable lanes PASS; all 10 device/editor tiers **UNVERIFIED** with exact blockers above.
+
+**Next step:** Acquire licensed `6000.3.4f1` editor + Build Support + step-counter device + macOS to run the 10 UNVERIFIED tiers; if any exposes a blocker, spin a focused campaign on that measured blocker. Do not expand to Region 2/HealthKit/cloud until M9 exit criteria are green.
