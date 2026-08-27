@@ -1,6 +1,8 @@
 # M8.6 Tasks — Unity First-Import & Device Readiness Certification
 
-**Status:** ACTIVE FOR EXECUTION AFTER HANDOFF  
+> New executors must use M8.7. Do not discard completed M8.6 work; reconcile it into the M8.7 branch and continue only genuinely incomplete requirements.
+
+**Status:** SUPERSEDED FOR NEW EXECUTION — M8.7 absorbs every unresolved requirement; preserve this file as historical task/evidence context.  
 **Executor rule:** execute the entire campaign coherently. Use up to a 12-hour autonomous work budget, but never pad elapsed time with unrelated work. Fix every discovered Critical/High defect and any Medium defect necessary for truthful certification. Do not expand product scope.
 
 ## 0. Repository truth and safety — before all mutation

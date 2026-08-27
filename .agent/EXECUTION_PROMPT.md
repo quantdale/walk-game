@@ -1,314 +1,238 @@
-# Execution Prompt — M8.6 Unity First-Import & Device Readiness Certification
+# Execution Prompt — M8.7 Canonical State & Certification Integrity Closure
 
-**Status:** ACTIVE  
-**Planned-From:** `main@3bbdbcca11fb20a6680dbb96e808b9df2cca31f3`  
-**Planner staging branch:** `agent/walk-game/m8.6-planner-20260826`  
-**Canonical OpenSpec change:** `openspec/changes/m8.6-unity-device-readiness-certification/`  
-**Target implementation branch:** `agent/walk-game/m8.6-<session-id>`  
-**Campaign type:** Unity first-import / semantic compile / editor runtime / Android build+device certification / performance evidence  
-**Target milestone:** M8 — Device Ready  
-**Autonomous work budget:** up to 12 hours
+Status: ACTIVE
+Planned-From: main@e78ba78f24e77e7566b9ed3259878f6af83d24b5
+Planner branch: agent/walk-game/m8.7-planner-20260827
+Canonical OpenSpec: openspec/changes/m8.7-canonical-state-certification-integrity/
+Target implementation branch: agent/walk-game/m8.7-<session-id>
+Target milestone: M8 — Device Ready
+Autonomous work budget: up to 12 hours
 
 ## Mission
 
-Reacquire repository truth, reconcile this planner staging branch with current `origin/main`, then execute the **entire M8.6 OpenSpec in one coherent autonomous campaign**.
+Execute the complete M8.7 OpenSpec in one autonomous integrity-closure campaign.
 
-M8.5 closed the known headless runtime-ownership/rollback-fidelity tranche and explicitly recommended real Unity/device certification rather than inventing another speculative hardening pass. The current repository has strong engine-free evidence but still lacks fresh semantic Unity compile, EditMode, PlayMode, Android IL2CPP/ARM64 build, genuine step-counter lifecycle, physical mobile UX, and performance/battery/thermal proof.
+This is not an M9 feature-expansion prompt. The 2026-08-27 re-audit found a new canonical save-graph defect family after M8.5/M8.6 planning: schema-compatible JSON can contain null or identity-inconsistent region/history elements that survive current SaveValidator behavior and can later crash boot or failed-save rollback. State integrity outranks playtest expansion under the repository roadmap.
 
-Do not treat this as a request to fix one compiler error and stop. Work through the prioritized certification stack for up to the full 12-hour budget while legitimate in-scope work remains:
+The previous M8.6 executor also produced local commit d0c8687, but its first push was blocked because the tracked pre-push guard refuses a branch whose remote ref does not yet exist. During this planner session the remote branch agent/walk-game/m8.6-exec-20260826 was created at main@e78ba78 specifically so a still-existing local d0c8687 can be pushed by a normal fast-forward. Never assume d0c8687 is landed; prove it exists and inspect it.
 
-`identity/reconcile -> baseline -> Unity import/compile -> certification harness -> EditMode -> PlayMode -> Android build -> Android smoke -> physical step-counter/UX -> performance -> conditional iOS -> final rerun/docs/push`.
+Work the entire stack:
+identity/reconcile -> prior M8.6 recovery -> fresh baseline -> reproduce save-graph failures -> structural invariant matrix -> repair/load/rollback hardening -> first-push guard repair -> carry forward remaining M8.6 evidence integrity -> whole-repo regression -> genuine editor/device lanes if available -> docs/OpenSpec -> detailed normal push.
 
-Elapsed time is not a success metric. Do **not** manufacture busywork to consume 12 hours. If a lane is blocked by licensing, UAC/elevation, Build Support, physical hardware, macOS/Xcode or signing, capture the exact reproducible blocker once and move to another legitimate lane. If every executable requirement is complete earlier, finish honestly.
+Do not stop after the first fix while legitimate in-scope work remains. Do not fabricate work to occupy 12 wall-clock hours.
 
 ## Absolute repository boundary
 
-This repository is **`quantdale/walk-game`**. It is NOT `quantdale/simple-walk-game`.
+This repository is quantdale/walk-game. It is not quantdale/simple-walk-game.
 
-Before any mutation:
+Before mutation:
+    sh scripts/assert-repo-identity.sh
+or:
+    ./scripts/Assert-RepoIdentity.ps1
 
-```bash
-sh scripts/assert-repo-identity.sh
-# or
-./scripts/Assert-RepoIdentity.ps1
-```
+Stop on mismatch.
 
-STOP on mismatch. Never import code, branch names, SHAs, prompts, status claims or assumptions from the sibling repository.
+## Required reading before implementation
 
-## How to consume this planner branch
+Read in full:
+1. AGENTS.md
+2. .agent/PLANNER_HANDOFF.md
+3. this file
+4. openspec/changes/m8.7-canonical-state-certification-integrity/audit.md
+5. proposal.md
+6. design.md
+7. specs/integrity-closure/spec.md
+8. tasks.md
+9. docs/IMPLEMENTATION_STATUS.md
+10. docs/MASTER_PLAN.md
+11. docs/ROADMAP.md
+12. docs/TECHNICAL_ARCHITECTURE.md
+13. docs/DATA_MODEL.md
+14. docs/TESTING_AND_PERFORMANCE.md
+15. docs/AGENT_EXECUTION_GUIDE.md
+16. docs/ACTIVITY_REWARD_SYSTEM.md
+17. docs/MOBILE_ACTIVITY_INTEGRATION.md
+18. docs/PRIVACY_SAFETY_ANTI_CHEAT.md
+19. ADR 0007 through ADR 0011
+20. the full M8.6 OpenSpec because any unresolved R1–R9 / E1–E10 requirement remains binding.
 
-This OpenSpec and ACTIVE prompt were staged on `agent/walk-game/m8.6-planner-20260826` from `main@3bbdbcca...`.
+## Startup / reconciliation — mandatory
 
-At session start:
+1. Prove identity.
+2. Fetch origin and inspect current origin/main; do not assume e78ba78 is still head.
+3. Record branch, HEAD, upstream, worktree, recent commits, open PRs/issues.
+4. Inspect origin/agent/walk-game/m8.6-exec-20260826.
+5. Check whether d0c8687 exists locally or remotely:
+       git cat-file -e d0c8687^{commit}
+   If it exists, inspect its full diff and ancestry before reuse.
+6. If the previous local M8.6 branch contains d0c8687 and origin/agent/walk-game/m8.6-exec-20260826 is an ancestor, run the repository remote-advance guard and push that prior branch normally. The remote branch was pre-created at e78ba78 to make this possible. Never force.
+7. Reconcile current main + equivalent M8.6 work into a new dedicated M8.7 implementation branch/worktree.
+8. Acquire the writer lease before the first mutation.
+9. Run fresh baseline gates and inventory external toolchains.
 
-1. fetch `origin`;
-2. check out/read the planner staging branch so you have this package;
-3. inspect current `origin/main` and every commit after `3bbdbcca...`;
-4. reconcile the planner package with any newer main changes;
-5. create a dedicated implementation branch/worktree `agent/walk-game/m8.6-<session-id>` that **contains the planner package plus current authoritative main**;
-6. acquire the repository writer lease before the first implementation mutation;
-7. do not implement directly on the planner staging branch.
+If d0c8687 cannot be found, do not recreate its summary as fact. Inspect current source and implement only requirements that are actually missing.
 
-If current main already contains an equivalent/newer M8.6 package, use the newer authoritative package and do not duplicate this staging copy.
+## Planner-confirmed findings to reproduce/disposition
 
-## Required reading — in full before implementation
+### H1 — null current RegionState can pass validation and crash later
 
-Canonical OpenSpec:
+WorldState.GetOrCreateRegionState returns an existing dictionary value without checking for null. SaveValidator skips null RegionState values. A parseable save can therefore keep currentRegionId -> null and later dereference null during boot/seeding.
 
-1. `openspec/changes/m8.6-unity-device-readiness-certification/audit.md`
-2. `openspec/changes/m8.6-unity-device-readiness-certification/proposal.md`
-3. `openspec/changes/m8.6-unity-device-readiness-certification/design.md`
-4. `openspec/changes/m8.6-unity-device-readiness-certification/specs/device-readiness/spec.md`
-5. `openspec/changes/m8.6-unity-device-readiness-certification/tasks.md`
+Required result:
+- focused regression;
+- load-boundary structural repair or explicit fail-closed classification;
+- GetOrCreateRegionState defense in depth;
+- boot-equivalent path no longer throws;
+- no progression is fabricated.
 
-Repository/global requirements:
+### H2 — region dictionary key and RegionState.regionId can disagree
 
-- `AGENTS.md`
-- `.agent/PLANNER_HANDOFF.md`
-- `docs/IMPLEMENTATION_STATUS.md`
-- `docs/MASTER_PLAN.md`
-- `docs/ROADMAP.md`
-- `docs/TECHNICAL_ARCHITECTURE.md`
-- `docs/DATA_MODEL.md`
-- `docs/ACTIVITY_REWARD_SYSTEM.md`
-- `docs/MOBILE_ACTIVITY_INTEGRATION.md`
-- `docs/PRIVACY_SAFETY_ANTI_CHEAT.md`
-- `docs/TESTING_AND_PERFORMANCE.md`
-- `docs/DEVICE_CERTIFICATION_CHECKLISTS.md`
-- `docs/AGENT_EXECUTION_GUIDE.md`
-- ADR 0007, 0008, 0009, 0010, 0011 and any newer ADR after fetch.
+Current repair does not enforce one identity. Downstream code uses both forms.
 
-If this adapter conflicts with a normative M8.6 spec requirement, the OpenSpec requirement wins subject to repository-global safety/integrity rules.
+Required result:
+- deterministic canonical identity rule;
+- regression for key/value mismatch;
+- no split catalog/event/progression identity after repair.
 
-## Planner audit result — seed evidence, not a substitute for your own reproduction
+### H3 — null recent Vitality transaction can break rollback
 
-The planner reconciled the complete recursive tree, current M8.5 completion state, roadmap/status/docs, CI/static/test boundaries, Unity editor/build tooling, Android smoke/device checklist, native integrations and representative post-M8.5 runtime paths.
+SaveValidator repairs the list container but not null elements. ProfileStateCopier.CopyTransaction dereferences every source element.
 
-At planning time:
+Required result:
+- regression containing a null history element;
+- drive a real failed PersistenceCoordinator commit;
+- no unhandled exception in recovery;
+- valid balance/history retained without minting progression.
 
-- `main = 3bbdbcca11fb20a6680dbb96e808b9df2cca31f3`;
-- M8.5 is COMPLETE and reports historical 213/213 standalone tests;
-- no open PRs or open issues compete with M8.6;
-- Unity compile/EditMode/PlayMode remain UNVERIFIED;
-- Android Build Support and real device step-sensor evidence remain UNVERIFIED;
-- iOS/Xcode/device and physical performance remain UNVERIFIED.
+### H4 — no full structural invariant matrix
 
-Planner-confirmed/high-confidence certification gaps:
+Build and regression-lock a complete serializer-visible canonical graph matrix. Repair only structural impossibilities or already-defined safety values; do not indiscriminately sanitize legitimate data.
 
-### F1 — likely Editor assembly compile blockers
+### H5 — first-push race guard deadlocks on new branches
 
-`Assets/WalkGame/Editor/WalkGameEditorTools.cs` uses `GraphicsSettings` (normally `UnityEngine.Rendering`) and `IPostprocessBuildWithReport` (normally `UnityEditor.Build`) without the corresponding namespace imports/qualification.
+The hook fetches the exact target ref and treats "ref absent" as generic failure, blocking first push. Standalone race scripts describe new-branch support but have the same fetch-first contradiction.
 
-The standalone `.NET` project intentionally does not compile `Editor`, `App`, `UI`, `World` or platform Unity assemblies, and `verify-unity-static.ps1` explicitly does not perform semantic Unity compilation. Therefore the current 213-test headless result cannot certify this file.
+Required result:
+- exact ref existence probe;
+- absent ref positively proven => first normal push allowed;
+- transport/auth uncertainty => fail closed;
+- existing remote advancement/divergence => block;
+- deletion => block;
+- PowerShell/shell/hook parity;
+- deterministic local bare-remote tests;
+- no force path.
 
-**Executor rule:** if licensed Unity is available, reproduce the compiler result before patching. If Unity emits the predicted errors, fix the smallest namespace/API root cause, inspect the whole Editor assembly for equivalent compile drift, and rerun cleanly. Do not report this prediction as a confirmed compiler failure unless the editor reproduces it.
+## M8.6 carry-forward
 
-### F2 — EditMode verifier can overstate evidence
+The previous session summary reported:
+- exact pinned Unity toolchain preflight;
+- serial-bound adb;
+- idempotent uninstall;
+- final smoke summary/logcat in finally;
+- foreground/resumed activity evidence;
+- Test-CertificationScripts 35/35.
 
-`verify-unity-editmode.ps1` treats Unity exit 0 as success without requiring `editmode-results.xml`, while the PlayMode runner at least requires its result artifact.
+Treat those as reconciliation hints, not authoritative source state.
 
-**Required end state:** EditMode and PlayMode runners fail closed on missing/invalid/incomplete results and require zero test failures.
+After incorporating actual d0c8687/equivalent code, verify the full M8.6 contract still includes:
+- fail-closed semantic EditMode/PlayMode XML validation;
+- explicit semantic Unity compile/import verifier;
+- exact Unity 6000.3.4f1 identity;
+- Android build source/toolchain/APK provenance;
+- exact adb serial everywhere;
+- idempotent clean install;
+- failure artifacts/final disposition;
+- foreground/resumed package;
+- source/APK/device cross-check;
+- certification fixture regressions;
+- honest evidence-tier separation.
 
-### F3 — Android smoke target is not deterministic with multiple adb devices
+If any locally executable requirement is still missing, finish it within M8.7.
 
-The smoke script enumerates multiple targets but does not bind commands to a serial. The physical-device checklist requires exactly one target.
+## Fresh required baseline/final gates
 
-**Required end state:** explicit serial or fail-closed exactly-one selection; every adb call bound to the chosen serial; artifact summary records target metadata, step-counter availability, APK hash and source SHA. Emulator/no-step-counter results are labeled lifecycle-only.
+Run from reconciled source and again from final source:
+    dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj
+    ./scripts/verify-domain.ps1
+    ./scripts/verify-unity-static.ps1
+    ./scripts/verify-release-hygiene.ps1
+    ./scripts/Test-AgentGuards.ps1
+    ./scripts/Test-CertificationScripts.ps1   # when present after reconciliation
+    git diff --check
 
-### F4 — the largest remaining risk is integration evidence
+Also run every newly added focused persistence/guard regression.
 
-The existing PlayMode suite covers the right vertical-slice invariants, but it has never produced fresh current-tree licensed Unity evidence. Treat semantic compile/import as P0 before meaningful device certification.
+No historical count is a current PASS.
 
-Treat F1-F4 as the minimum starting evidence. Re-audit every affected file/call path after pulling current code. Fix newly discovered Critical/High correctness/build/runtime defects and Medium certification-integrity defects required for truthful evidence. Do not expand into unrelated features.
+## Genuine editor/device lanes
 
-## Startup sequence — mandatory
+If and only if legitimate prerequisites exist, continue through:
+- Unity 6000.3.4f1 semantic import/compile;
+- EditMode;
+- PlayMode;
+- Android IL2CPP ARM64 build;
+- selected-target lifecycle smoke;
+- physical step-counter exactly-once;
+- physical Builder/Explore/permission/save-recovery UX;
+- measured FPS/frame time/GC/memory/battery/thermal;
+- iOS only with real macOS/Xcode/signing/device.
 
-1. Prove repository identity.
-2. Fetch remote state and reconcile planner staging branch against current main.
-3. Record start SHA, branch/upstream/worktree, recent commits, open PRs/issues.
-4. Create the dedicated implementation worktree/branch containing current main + M8.6 planner package.
-5. Acquire writer lease.
-6. Record full environment inventory: Unity/Hub/license/modules, .NET, JDK, SDK, NDK, adb targets, physical sensor capability, Xcode/iOS availability.
-7. Run every locally available baseline gate and record **fresh** exact results.
-8. Read the full OpenSpec package and repository docs.
-9. Start with the highest available gate; do not skip compile to chase device evidence.
-
-## Implementation / certification directive
-
-Execute **every locally executable checkbox and normative requirement** in the M8.6 OpenSpec. The task matrix is authoritative. Key outcome requirements are summarized below.
-
-### A. Real Unity semantic compile
-
-With a legitimate licensed Unity `6000.3.4f1` session:
-
-- import/setup the project using repository-supported tooling;
-- capture full import/compiler log;
-- fix all compiler/asmdef/package/import blockers;
-- specifically reproduce/disposition the predicted Editor namespace references;
-- inspect Unity-only App/UI/World/platform assemblies invisible to the standalone harness;
-- obtain a clean repeat compile/reopen confirmation.
-
-If licensing is unavailable, document the exact blocker; never bypass activation. Continue with legitimate non-editor certification-harness work.
-
-### B. Fail-closed EditMode/PlayMode evidence
-
-Harden scripts so exit code alone cannot create false PASS. Require real, parseable completed result XML with zero failures and log artifacts. Then, when licensed:
-
-- run EditMode;
-- run PlayMode `RuntimeCertificationTests`;
-- fix every Critical/High runtime defect;
-- add focused Unity-level regression coverage;
-- rerun the full editor gates.
-
-### C. Android build readiness
-
-If Android Build Support is installed/legitimately installable:
-
-- verify Unity module + SDK/NDK/JDK;
-- build the existing release-shaped development APK with IL2CPP + ARM64;
-- preserve package/minSdk/targetSdk contract unless a documented toolchain fix requires a deliberate change;
-- capture build log, APK SHA-256, size, source SHA and configuration;
-- triage/fix Gradle/IL2CPP/manifest/JNI/build blockers.
-
-If installation needs user elevation that this session cannot obtain, capture blocker and move on. No security bypass.
-
-### D. Deterministic Android smoke
-
-Make target selection exact. Then certify clean install, cold launch, Bootstrap stability, background/resume, supported rotation/aspect attempt, force-stop/relaunch and fatal/ANR sweep. Preserve logs/summary on failures where possible.
-
-### E. Genuine physical step-counter lifecycle / exactly-once
-
-Only a real device reporting `android.hardware.sensor.stepcounter` can satisfy this lane. Execute the repository device checklist, prioritizing permission, baseline, known walk, background, process death, reboot/counter reset, Expedition, location-denied fallback and duplicate-credit probes.
-
-Any reproducible duplicate credit or repository-caused permanent movement loss is release-blocking. Preserve evidence, fix root cause, extend the required headless regressions, rebuild and rerun affected device cases.
-
-### F. Mobile vertical-slice UX
-
-On physical Android, audit touch/safe-area/project/placement/Explore/onboarding/permission/Expedition/audio/save-recovery surfaces. Fix blocker/high defects that invalidate M8. Defer aesthetic-only polish.
-
-### G. Measured performance/battery/thermal
-
-Capture Builder and Explore separately. Measure before optimizing. Record FPS/frame time, GC/memory where feasible, transition hitch, battery delta and thermal evidence. Any performance change must include before/after evidence on the same device/scenario.
-
-### H. Conditional iOS
-
-Run iOS only with genuine macOS/Xcode/signing/device preconditions. Otherwise record the blocker and leave the tier UNVERIFIED. Do not simulate a PASS.
+If a prerequisite is absent, record exact UNVERIFIED blocker once and move to another legitimate lane. Never bypass licensing, elevation, signing or device requirements.
 
 ## Scope exclusions
 
-Do NOT implement:
-
+Do not add:
 - Region 2;
-- HealthKit / Health Connect;
-- new active GPS/location scope;
+- HealthKit/Health Connect;
 - cloud/accounts/social/multiplayer;
-- broad art overhaul;
-- Addressables migration;
-- speculative performance optimization before measurement;
-- unrelated economy/reward rebalance;
-- licensing/elevation/signing bypasses.
+- analytics/backend rollout;
+- broad art/UI overhaul;
+- speculative performance optimization without measurements;
+- economy rebalance;
+- unrelated package modernization.
 
-If you discover a low/medium unrelated idea, record it for later rather than derailing M8.6.
-
-## Mandatory final gate matrix
-
-Run every available gate from the final source state and record exact command/result/artifact:
-
-```text
-repository identity guard
-dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj
-scripts/verify-domain.ps1
-scripts/verify-unity-static.ps1
-scripts/verify-release-hygiene.ps1
-scripts/Test-AgentGuards.ps1
-git diff --check
-Unity import/compile            (licensed editor only)
-scripts/verify-unity-editmode.ps1 (licensed editor only)
-scripts/verify-unity-playmode.ps1 (licensed editor only)
-scripts/build-android-development.ps1 (Android Build Support only)
-scripts/verify-android-smoke.ps1       (exact selected target only)
-physical Android device checklist      (genuine sensor/device only)
-iOS checklist                          (macOS/Xcode/signing/device only)
-```
-
-Do not label unavailable tiers PASS.
+Do not weaken exactly-once movement, privacy, offline-first behavior, one-writer rules, quarantine semantics, or safe Git history.
 
 ## 12-hour continuation policy
 
-Use the detailed schedule in `tasks.md`. Operationally:
+Use tasks.md section 12 as the detailed schedule.
 
-- keep working after the first compile/test/build fix while later eligible lanes remain;
-- when an external blocker is unchanged, document it once thoroughly and move on;
-- never idle/retry the same impossible prerequisite merely to extend wall-clock time;
-- keep changes within M8.6 scope;
-- if all legitimate executable work finishes before 12 hours, close honestly;
-- if the 12-hour budget ends with productive work remaining, leave a precise continuation point and artifacts.
+Operationally:
+- continue while legitimate M8.7 work remains;
+- reproduce before fixing where feasible;
+- add regression coverage for each Critical/High defect;
+- do not repeatedly retry unchanged external blockers;
+- do not stop after one successful patch if later in-scope work is executable;
+- finish early if the entire executable scope is genuinely complete;
+- if the budget ends with productive work remaining, leave an exact continuation point.
 
 ## Completion protocol
 
-Before declaring completion:
-
-1. rerun all affected available gates from final state;
-2. repeat whole-repo searches/audits for any code path touched, including activity/persistence/provider lifecycle if those systems changed;
-3. update `docs/IMPLEMENTATION_STATUS.md` with exact evidence tiers and artifact identities;
-4. update testing/device docs with hardened gate semantics and measured results;
-5. update OpenSpec task/status/evidence honestly;
-6. change this file to `Status: COMPLETE` (or `BLOCKED` only if the entire campaign truly cannot make further legitimate progress) and append a detailed executor report containing:
-   - planned/start/reconciled SHA;
+Before completion:
+1. rerun all available final gates;
+2. re-audit every changed call path;
+3. update docs and ADRs based on actual behavior;
+4. update M8.7 OpenSpec checkboxes/evidence;
+5. append a detailed executor report to this file with:
+   - planned/start/reconciled/final SHAs;
+   - prior M8.6 recovery disposition and d0c8687 availability;
    - branch/worktree/lease;
-   - final SHA(s);
-   - environment + editor/module/toolchain/device identities;
    - every reproduced defect/root cause/fix;
-   - fresh standalone/EditMode/PlayMode counts;
-   - Android build result + APK hash;
-   - smoke/device case matrix and artifact paths;
-   - performance/GC/memory/battery/thermal evidence;
-   - iOS result/blocker;
+   - structural invariant matrix;
+   - exact fresh test counts;
+   - guard scenario matrix;
+   - M8.6 certification-harness disposition;
+   - editor/build/device evidence or blockers;
    - docs/ADR changes;
-   - remaining blockers/follow-ups;
+   - remaining risks;
    - next-campaign recommendation.
-7. fetch/check remote advancement; reconcile deliberately if needed;
-8. commit with a detailed full-session report and push the implementation branch per repository policy. Never force-push.
+6. mark Status COMPLETE only when all locally executable work is done; external tiers may remain explicitly UNVERIFIED.
+7. fetch/check remote advancement.
+8. commit with a detailed full-session report and push the M8.7 implementation branch normally.
+9. never force-push.
 
 ## Next campaign decision
 
-If M8.6 produces materially green Unity + Android device readiness, recommend **M9 Closed Playtest Readiness / Validation**. If real measurements expose a material exactly-once or performance blocker, recommend a focused campaign on that measured blocker. Do not jump to Region 2 simply because this campaign ends.
+Only recommend M9 Closed Playtest Readiness when M8.7 closes all discovered Critical/High canonical-state/integration defects and no executed device/editor evidence exposes a release blocker.
 
----
-
-## 2026-08-27 deep re-audit delta — MUST READ BEFORE EXECUTION
-
-A second exhaustive planning audit was completed against **\`main@068e215388e5031438fc5acb6efb73e9d847f4e7\`** after the original M8.6 package was staged.
-
-It reconfirmed that **M8.6 is the correct next campaign** and found no new headlessly provable Critical/High domain-state tranche that should replace it. It also audited the complete 288-file tracked tree, including all 107 Unity metas, all C# and native/runtime surfaces, tests, scenes, asmdefs, scripts, docs/ADRs, hooks, configs and OpenSpec state.
-
-The detailed delta is appended to:
-
-- \`openspec/changes/m8.6-unity-device-readiness-certification/audit.md\`;
-- \`openspec/changes/m8.6-unity-device-readiness-certification/specs/device-readiness/spec.md\` (new normative E1-E10 requirements);
-- \`openspec/changes/m8.6-unity-device-readiness-certification/tasks.md\` (new section 17).
-
-Those additions are **mandatory**, not suggestions.
-
-### Additional seed findings you must disposition
-
-In addition to F1-F4 already listed above:
-
-1. **Both Unity test wrappers need semantic XML validation.** EditMode can pass with no XML; PlayMode only checks existence. Missing/malformed/empty/stale/incomplete/failed result data must fail closed.
-2. **Prove the Unity executable is exactly 6000.3.4f1.** \`UNITY_EDITOR_PATH\` currently provides a path, not toolchain identity.
-3. **Create an explicit semantic compile/import gate.** \`verify-unity-static.ps1\` is intentionally not a compiler and must never be used as compile evidence.
-4. **Bind every adb call to one serial.** This includes direct \`pidof\` and \`logcat\` calls, not only the helper.
-5. **Fix clean-install uninstall semantics.** The current script comments that an absent package is acceptable but its helper throws on the non-zero uninstall result.
-6. **Persist final/failure evidence truthfully.** The current smoke summary is written before optional cleanup is recorded; make the final artifact reflect final disposition.
-7. **Emit provenance manifests.** Bind Unity/build/device evidence to source SHA, exact toolchain, APK SHA-256 and exact target identity.
-8. **Do not equate process-alive with gameplay-ready.** Lifecycle process evidence, PlayMode composition evidence, physical UX evidence and real sensor evidence are separate tiers.
-9. **Conditional iOS:** only if the real lane exists, make post-build permission-string evidence fail closed and repair the stale helper name in \`IOS_BUILD_REQUIREMENTS.md\`.
-
-### Execution priority adjustment
-
-Within the existing 12-hour budget, front-load **evidence-harness integrity** immediately after baseline/environment inventory, because all later PASS claims depend on it:
-
-\`identity/reconcile -> fresh headless baseline -> toolchain/provenance preflight -> semantic Unity compile -> fail-closed test XML -> EditMode -> PlayMode -> Android build manifest -> exact-target smoke -> physical sensor/UX -> measured performance -> conditional iOS -> final rerun/docs/push\`.
-
-Do not burn time merely to reach 12 wall-clock hours. The instruction is to permit and organize a long autonomous campaign, not to fabricate work. Continue while legitimate M8.6 work remains; finish early if every executable requirement is genuinely complete, or leave an exact continuation point if the budget ends first.
-
+If a real measured exactly-once, performance, build or UX blocker remains, recommend a focused campaign on that blocker. Do not jump to Region 2.

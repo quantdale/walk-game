@@ -1,6 +1,8 @@
 # M8.6 Proposal — Unity First-Import & Device Readiness Certification
 
-**Status:** PROPOSED  
+> Superseded for new execution by openspec/changes/m8.7-canonical-state-certification-integrity/. Preserve this package as audit/history; M8.7 absorbs all unresolved M8.6 requirements.
+
+**Status:** SUPERSEDED by M8.7 Canonical State & Certification Integrity Closure; unresolved certification requirements are carried forward.  
 **Depends on:** completed M8.5 Runtime Ownership & Rollback Fidelity / ADR 0011  
 **Target:** M8 — Device Ready
 
