@@ -1,224 +1,134 @@
-# Execution Prompt — M8.8 Pre-Playtest Integrity & Unity Bring-Up Closure
+# Execution Prompt — M8.8 Minimal Blocker-Closure Sequence
 
 Status: ACTIVE
-Planned-From: main@cf260d04fefbb2d5e7da265de5ae03a9aa768a0a
-Planner branch: agent/walk-game/m8.8-planner-20260827
-Canonical OpenSpec: openspec/changes/m8.8-pre-playtest-integrity-and-unity-bringup/
-Target implementation branch: agent/walk-game/m8.8-<session-id>
-Target milestone: M8.8 — final pre-M9 closure
-Autonomous work budget: up to 12 hours
+Canonical OpenSpec: `openspec/changes/m8.8-pre-playtest-integrity-and-unity-bringup/`
+Sequence baseline: `main@0c710e70e8348e4b2cb57b92bd0878283a6e6c49`
+Repository: `quantdale/walk-game`
 
 ## Mission
 
-Execute the complete M8.8 OpenSpec as one autonomous pre-playtest integrity campaign.
+Close M8.8 using the smallest dependency-ordered execution sequence that can produce trustworthy pre-playtest evidence. Do not expand into M9, optional polish, speculative platform rewrites, or unrelated hardening.
 
-Do NOT jump directly to M9. The deep audit of current main found two confirmed pre-playtest defects plus an evidence/reproducibility gap:
+The confirmed defects are:
 
-1. `Assets/WalkGame/Editor/WalkGameEditorTools.cs` references `GraphicsSettings` and `IPostprocessBuildWithReport` without importing their actual Unity namespaces. Fix the source and prove semantic compilation when the pinned editor is available.
-2. `SaveMigrator.TryMigrateToCurrent` can break out of its lower-schema loop and return true while `schemaVersion < Current`. Make success mean the profile is exactly Current, reject unsupported pre-v1 material, and regression-lock migration progress.
-3. The tracked verification surface has no dedicated semantic Unity import/compile gate even though prior campaign requirements describe one. Add a real fail-closed gate so static structure can no longer masquerade as semantic compilation.
-4. First-import/project setup creates URP/project state that is not currently represented by the clean tracked tree. On real Unity, materialize and classify that state or prove deterministic generation/provenance; never hand-fabricate Unity serialized assets.
+- **H1:** `WalkGameEditorTools.cs` lacks the namespaces required for `GraphicsSettings` and `IPostprocessBuildWithReport`.
+- **H2:** `SaveMigrator.TryMigrateToCurrent` can return true while the schema remains below `SaveSchemaVersions.Current`.
+- **H3:** no dedicated fail-closed semantic Unity import/compile gate protects the repository from H1-class false greens.
+- **H4:** clean-checkout URP/project state has not been proven reproducible.
 
-The audit also identified Android denial-after-restart and iOS callback/provider-lifetime risks. Reproduce/certify those before changing native behavior. Close the smaller Vitality reason-code and unchecked reward-arithmetic invariants after the higher-priority work.
+The Android denial-after-restart and iOS provider-lifetime concerns are **unverified risks**, not confirmed defects. Reproduce them before changing platform behavior.
 
-Continue through all legitimately executable lanes for up to 12 hours. Do not stop after one successful patch while later in-scope work remains. Do not add unrelated work merely to consume time.
+## Non-negotiable evidence rule
 
-## Absolute repository boundary
+Maintain one evidence ledger throughout execution. Every result must be exactly one of:
 
-This repository is `quantdale/walk-game`.
+- **VERIFIED PASS:** freshly executed against the recorded source SHA, with command/scenario, environment, and artifact/log identity.
+- **VERIFIED FAIL:** freshly reproduced against the recorded source SHA, with minimal reproduction and captured failure.
+- **UNVERIFIED:** not executed because a named prerequisite is absent or the tier was not reached.
+- **HISTORICAL:** prior evidence used only as context.
 
-It is NOT `quantdale/simple-walk-game`.
+Never convert static inspection, fixture tests, historical counts, an earlier tier, or lack of reproduction into a runtime PASS. Never call an unexecuted risk a defect. A source-only test may verify a state machine but is not physical-device evidence.
 
-Before any mutation run:
-    sh scripts/assert-repo-identity.sh
-or:
-    ./scripts/Assert-RepoIdentity.ps1
+## Startup — one short preflight
 
-Stop on mismatch.
+1. Read `AGENTS.md`, `.agent/PLANNER_HANDOFF.md`, this prompt, and the M8.8 OpenSpec.
+2. Prove repository identity. Synchronize from current remote `main`; inspect commits after the sequence baseline and preserve equivalent newer work.
+3. Work on local `main` as required by the active planning workflow, acquire the writer lease, and record start SHA, dirty state, Unity/editor/build-support availability, Android device/API level, and macOS/Xcode/iOS-device availability.
+4. Run the currently available headless baseline once:
+   - `dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj`
+   - `./scripts/verify-domain.ps1`
+   - `./scripts/verify-unity-static.ps1`
+   - `./scripts/verify-release-hygiene.ps1`
+   - `./scripts/Test-AgentGuards.ps1`
+   - `./scripts/Test-CertificationScripts.ps1`
+   - `git diff --check`
+5. Record fresh results; label unavailable editor/device tiers UNVERIFIED and continue. Do not spend time rerunning an unchanged external blocker.
 
-## Mandatory reading
+## Execution sequence
 
-Read in full before implementation:
-1. `AGENTS.md`
-2. `.agent/PLANNER_HANDOFF.md`
-3. this file
-4. `openspec/changes/m8.8-pre-playtest-integrity-and-unity-bringup/audit.md`
-5. `proposal.md`
-6. `design.md`
-7. `specs/pre-playtest-integrity/spec.md`
-8. `tasks.md`
-9. `docs/IMPLEMENTATION_STATUS.md`
-10. `docs/MASTER_PLAN.md`
-11. `docs/ROADMAP.md`
-12. `docs/TECHNICAL_ARCHITECTURE.md`
-13. `docs/DATA_MODEL.md`
-14. `docs/TESTING_AND_PERFORMANCE.md`
-15. `docs/AGENT_EXECUTION_GUIDE.md`
-16. `docs/ACTIVITY_REWARD_SYSTEM.md`
-17. `docs/MOBILE_ACTIVITY_INTEGRATION.md`
-18. `docs/PRIVACY_SAFETY_ANTI_CHEAT.md`
-19. ADR 0003, 0005, 0007, 0009, 0010 and 0011
-20. M8.6/M8.7 OpenSpec as historical constraints where they remain applicable.
+Complete each stage before advancing. If a stage exposes a blocker that invalidates later stages, fix it and rerun only the affected gate.
 
-## Startup / reconciliation
+### Stage 1 — Close the deterministic confirmed source defects
 
-1. Prove repository identity.
-2. Fetch origin and inspect current `origin/main`; do not assume planned-from is still head.
-3. Record HEAD, branch, upstream, worktree, recent commits, open PRs/issues and dirty state.
-4. If main advanced after `cf260d04fefbb2d5e7da265de5ae03a9aa768a0a`, inspect every intervening commit and preserve equivalent newer work.
-5. Create one dedicated M8.8 implementation branch/worktree from reconciled current main.
-6. Acquire the repository writer lease before mutation.
-7. Run the fresh baseline and environment inventory in `tasks.md` sections 0-1.
-8. Do not reuse historical PASS counts as current evidence.
+1. Fix H1 using the actual Unity namespaces or fully qualified API names. Do not use reflection, text-check exceptions, or suppression.
+2. Fix H2 so:
+   - success implies `profile.schemaVersion == SaveSchemaVersions.Current`;
+   - v0, negative, and future schemas fail closed unless a real migration exists;
+   - each migration step advances exactly as designed or fails;
+   - unknown lower material is never relabeled as current.
+3. Add focused regression tests for current, zero, negative, future, missing-step, no-progress, backward, and version-jump migration cases.
+4. Run only the focused tests plus domain verification needed to prove H2. H1 remains source-fixed but semantic status stays UNVERIFIED until Stage 2.
 
-## Priority order
+**Exit:** H2 is freshly VERIFIED PASS; H1 is patched and awaiting semantic proof. Do not perform optional numeric, Vitality-reason, shader, UX, or performance work unless a gate in this sequence directly exposes it as a blocker.
 
-Work in this order unless a reproduced dependency forces a narrower reorder:
+### Stage 2 — Add semantic compile evidence, then prove clean-checkout/URP reproducibility
 
-### Priority A — confirmed source blockers
-- H1 Editor namespace/semantic compile.
-- H2 SaveMigrator false-success lower schema.
-- H3 dedicated semantic Unity compile/import gate.
-- H4 first-import/URP clean-checkout reproducibility.
+1. Add one dedicated semantic Unity import/compile wrapper for pinned Unity `6000.3.4f1`. It must:
+   - fail on wrong editor identity, launch/import/compiler errors, or stale evidence;
+   - bind evidence to source SHA and dirty state;
+   - preserve a fresh full editor log and concise machine-readable result;
+   - report unexpected tracked mutation;
+   - have fixture tests for success, compiler failure, launch failure, wrong version, stale log/evidence, and unexpected mutation.
+2. Run wrapper fixture tests. These verify wrapper semantics only; label real Unity compilation UNVERIFIED until Unity runs.
+3. If the pinned licensed editor is available, use a disposable clean checkout/worktree at the recorded SHA:
+   - run semantic import/compile before project setup;
+   - capture the exact first-import diff;
+   - run the repository project setup;
+   - capture generated URP/project state;
+   - run setup a second time and prove idempotence;
+   - track stable editor-generated canonical state if required, or formally bind deterministic generated-state hashes/diffs into evidence;
+   - never hand-author opaque Unity serialized assets;
+   - rerun semantic compile from a second clean checkout of the resulting source.
+4. Sweep all Unity assemblies after the first compile error; do not stop with H1 if additional semantic failures appear.
 
-### Priority B — platform lifecycle reproduction
-- Android denial -> process restart -> refresh/request state model.
-- iOS managed/native callback lifetime, pending query teardown and provider-generation ownership.
+**Exit:** H1 and H3 are VERIFIED PASS only after a real fresh semantic compile. H4 is VERIFIED PASS only after clean-checkout generation/provenance and second-run idempotence are proven. Without licensed pinned Unity, H1 source fix and wrapper fixtures may pass, but H1 semantic proof and H4 remain UNVERIFIED with one precise environment blocker.
 
-### Priority C — smaller canonical integrity
-- non-empty reason code for successful Vitality spend;
-- overflow-safe resource/region-score mutation;
-- null-safe shader construction/disposition during Unity/build sweep.
+### Stage 3 — Reproduce the two platform risks; change code only on VERIFIED FAIL
 
-### Priority D — genuine certification
-When prerequisites actually exist:
-- semantic Unity compile/import;
-- EditMode;
-- PlayMode;
-- Android IL2CPP ARM64 build + provenance;
-- selected-target lifecycle smoke;
-- physical step-counter exactly-once;
-- touch/UX/performance/battery/thermal;
-- iOS only with real macOS/Xcode/signing/device.
+#### Android denial/restart
 
-If a prerequisite is absent, record one precise UNVERIFIED blocker and move to another legitimate lane. Never bypass Unity licensing, UAC/elevation, signing or hardware requirements.
+Run on a real supported Android target when available:
 
-## Required source behaviors
+1. fresh install with permission undecided;
+2. deny permission;
+3. force-stop/kill the process;
+4. relaunch and observe refresh state before requesting again;
+5. request again and verify prompt/rationale behavior is bounded;
+6. change permission in Settings, relaunch, and refresh;
+7. capture API level, app/source SHA, log, observed native result, refined C# result, and prompt count.
 
-### Editor semantic compilation
-Use the actual Unity namespaces/qualification. Do not hide the compile defect with reflection or a text-check allowlist.
+If VERIFIED FAIL, make the smallest correction preserving exactly-once activity credit and add deterministic regression coverage before rerunning the device scenario. If no suitable device/build exists, mark the physical scenario UNVERIFIED; do not infer PASS from mocks or source review.
 
-Add a dedicated semantic import/compile wrapper that:
-- proves exact Unity 6000.3.4f1;
-- binds to current source SHA/dirty state;
-- produces fresh log/evidence;
-- fails on launch/import/compiler errors and stale evidence;
-- surfaces unexpected project mutation;
-- has deterministic false-green fixture tests.
+#### iOS provider lifetime
 
-### Save migration
-A true return from `TryMigrateToCurrent` MUST imply `profile.schemaVersion == SaveSchemaVersions.Current`.
+First add or run the smallest deterministic source-level lifecycle harness covering pending history query, shutdown/recomposition, late callback, live-session stop, provider generation, and exactly-once completion. Then, only with macOS/Xcode/signing/device available, reproduce under IL2CPP/AOT and capture callback/delegate lifetime evidence.
 
-Current v1 is the initial defined schema. Explicit v0/negative material must fail closed unless a real documented migration is implemented.
+If VERIFIED FAIL, make the smallest ownership/lifetime fix consistent with ADR 0011, extend the regression harness, and rerun. Without the Apple toolchain/device, source-level invariants may be VERIFIED PASS while runtime iOS remains UNVERIFIED.
 
-Every future migration iteration must advance exactly as designed or fail. Never assign a version number merely to reinterpret unknown data.
+**Exit:** each risk is either runtime VERIFIED PASS, reproduced/fixed/reverified, or explicitly UNVERIFIED. Lack of reproduction is never permission for a speculative rewrite.
 
-### First-import project state
-With genuine Unity, capture the first setup/import diff. Track stable canonical editor-generated state needed for reproducibility or prove deterministic idempotent generation and bind it into evidence.
+### Stage 4 — Lock the regressions and certify the final source
 
-Do not manually synthesize opaque `.asset`/project serialized data without Unity.
+1. Add new regression gates to CI/current verification routing:
+   - migration invariant tests;
+   - semantic-wrapper fixture tests;
+   - real semantic compile gate where a licensed Unity runner exists;
+   - deterministic Android denial/restart state-machine tests;
+   - deterministic iOS callback/provider-lifetime tests.
+2. Confirm every gate is fail-closed and cannot accept missing, stale, wrong-SHA, wrong-editor, or wrong-target evidence.
+3. From final source, rerun the complete available baseline list from Startup plus all new focused gates.
+4. If Unity is available, run semantic compile, then EditMode and PlayMode. Run Android build/device and iOS tiers only when their real prerequisites exist. Keep each tier separate.
+5. Update the M8.8 OpenSpec tasks and evidence-bearing docs with the exact final ledger. Do not rewrite historical evidence as fresh.
+6. Mark this prompt COMPLETE only when all locally executable requirements pass, all confirmed source blockers are closed, unavailable tiers remain honestly UNVERIFIED, and no new Critical/High blocker is known.
 
-### Android/iOS
-Reproduce platform-specific behavior before rewriting native/provider code. Keep headless/source evidence distinct from physical runtime evidence.
+## Stop conditions
 
-Preserve ADR 0011 ownership and the existing exactly-once activity transaction path.
+Stop and report the exact blocker if repository identity fails, the writer lease is held by another session, remote `main` advances incompatibly, or publication is rejected. Do not force-push, overwrite competing work, weaken a gate, fabricate evidence, or retry unchanged external prerequisites.
 
-### Canonical numeric/audit invariants
-No successful Vitality spend without an audit reason.
-No unchecked overflow that can wrap resources or region scores.
+## Final publication
 
-## Mandatory baseline and final gates
-
-Run from fresh reconciled source and rerun from final source:
-    dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj
-    ./scripts/verify-domain.ps1
-    ./scripts/verify-unity-static.ps1
-    ./scripts/verify-release-hygiene.ps1
-    ./scripts/Test-AgentGuards.ps1
-    ./scripts/Test-CertificationScripts.ps1
-    git diff --check
-
-Also run:
-- all new migration/ledger/reward tests;
-- semantic compile-wrapper fixture tests;
-- actual semantic Unity compile/EditMode/PlayMode/build/device tiers when genuinely executable.
-
-No historical count is a current PASS.
-
-## Scope exclusions
-
-Do not add:
-- Region 2;
-- HealthKit or Health Connect;
-- cloud/accounts/social/multiplayer;
-- analytics/backend rollout;
-- broad art/UI redesign;
-- economy rebalance;
-- unrelated package upgrades;
-- speculative optimization without measurement.
-
-Do not weaken:
-- exactly-once movement;
-- fail-closed save recovery/quarantine;
-- offline-first behavior;
-- no-GPS passive movement;
-- repository identity/writer/race guards;
-- safe Git history.
-
-## 12-hour continuation policy
-
-Use `tasks.md` section 13 as the detailed schedule.
-
-Operational rules:
-- continue while legitimate M8.8 work remains;
-- reproduce before fixing platform behavior where feasible;
-- add regressions for each confirmed Critical/High defect;
-- do not repeatedly retry an unchanged external blocker;
-- do not stop after one successful patch if later lanes are executable;
-- finish early if all legitimate executable scope is truly complete;
-- if the budget ends with productive work remaining, leave an exact continuation point and evidence.
-
-## Completion protocol
-
-Before closing:
-1. rerun every available final gate from final source;
-2. re-audit all changed call paths and the whole-repo regression checklist;
-3. update docs/ADRs only for behavior/evidence actually changed;
-4. update M8.8 OpenSpec tasks and evidence truthfully;
-5. change this prompt from ACTIVE to COMPLETE only after all locally executable requirements are finished;
-6. append a detailed executor report containing:
-   - planned/start/reconciled/final SHAs;
-   - branch/worktree/writer lease;
-   - exact environment;
-   - H1-H4/P1-P2/M1-M3 reproduction, root cause, fix/disposition;
-   - semantic compile-gate artifacts/results;
-   - migration state table and focused tests;
-   - first-import/project-state diff and idempotence;
-   - exact fresh test counts;
-   - editor/build/device/iOS evidence or blockers;
-   - performance evidence when run;
-   - docs/ADR changes;
-   - remaining risks;
-   - next-campaign recommendation.
-7. fetch/check remote advancement;
-8. commit a detailed full-session report;
-9. push the implementation branch normally;
-10. never force-push or delete remote refs.
-
-## Next-campaign decision
-
-Recommend M9 Closed Playtest Readiness only if M8.8 closes every discovered locally executable Critical/High pre-playtest defect and no real semantic/editor/build/device run exposes a blocker.
-
-If genuine evidence exposes a compile/build/lifecycle/exactly-once/UX/performance blocker, the next campaign must target that measured blocker.
-
-Do not jump to Region 2.
+1. Recheck remote advancement and reconcile safely.
+2. Commit all intended work on local `main` with a detailed multi-line session report.
+3. Push normally to remote `main`; verify remote `main` contains the final commit and local `main` has no unpushed campaign commits.
+4. Report final remote SHA and the evidence ledger, grouped as VERIFIED PASS, VERIFIED FAIL, UNVERIFIED, and HISTORICAL.
+5. Recommend M9 only if no confirmed Critical/High blocker remains. A newly measured blocker takes priority over M9.
