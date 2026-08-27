@@ -12,7 +12,7 @@ Evidence tiers:
 - **DEVICE** — requires physical/emulated mobile hardware.
 - **UNVERIFIED** — claimed by no evidence yet.
 
-Last updated: 2026-08-26 (M8.5 runtime ownership & rollback fidelity campaign)
+Last updated: 2026-08-27 (M8.6 Unity first-import & device readiness certification — re-audit R1-R9 hardening executed; editor/device lanes UNVERIFIED by environment)
 
 ## Verification status
 
@@ -498,3 +498,96 @@ Baseline re-run fresh this campaign: **185/185** headless PASS before changes.
   and certified headlessly instead.
 - No save-schema change: dedup canonicalization repairs existing fields at load;
   claim ids are transient provider-private state.
+
+## M8.6 campaign — Unity first-import & device readiness certification
+
+**Scope (target milestone M8 — Device Ready):** the first real Unity import/compile,
+EditMode/PlayMode certification, Android IL2CPP/ARM64 build, deterministic install/
+launch/lifecycle smoke, physical step-counter exactly-once, vertical-slice UX, measured
+performance, and iOS — plus hardening the certification harness itself so evidence fails
+closed and binds to an exact editor/build/device identity.
+
+Start SHA `d48c692ccc745947357fd97850f52fa5f2511215` (prior exec commit); reconciled by
+rebasing the implementation branch onto `e78ba78f24e77e7566b9ed3259878f6af83d24b5` (`origin/main`,
+the 288-file deep re-audit that added the mandatory R1-R9 / E1-E10 findings). Branch
+`agent/walk-game/m8.6-exec-20260826`, single-writer lease `sess-20260826T234929Z-1745-771426137`.
+
+### Environment inventory (this session)
+
+| Capability | State |
+| --- | --- |
+| OS / shell | Windows 11 / PowerShell 7 |
+| .NET SDK | 9.0.300 |
+| Unity Hub | present (`C:\Program Files\Unity Hub\Unity Hub.exe`) |
+| Unity editor `6000.3.4f1` | **ABSENT** — `C:\Program Files\Unity\Hub\Editor` does not exist; no editor installed |
+| Unity license / entitlement | **ABSENT** — `AppData\Local\Unity\licenses` contains only `packages`; no `Unity_lic.ulf`; licensing client shows sessions but no valid entitlement |
+| Android Build Support (`AndroidPlayer`) | **ABSENT** (depends on editor install) |
+| JDK | 17.0.20 (Adoptium) |
+| Android SDK / NDK | `ANDROID_HOME`/`ANDROID_SDK_ROOT` = `C:\Users\palac\AppData\Local\Android\Sdk`; `adb` on PATH |
+| Physical Android device | **NONE connected** (`adb devices` empty at run time) |
+| macOS / Xcode / signing | **ABSENT** (Windows host) |
+
+This environment is therefore blocked at the editor+license layer for every EDITOR/
+DEVICE/iOS lane. The campaign executed every legitimate locally-runnable requirement
+and hardened the certification harness, then captured each blocked lane as
+`UNVERIFIED — <specific blocker>` per spec E5 rather than simulating a PASS.
+
+### Executed this campaign (AUTOMATED)
+
+| Finding | Fix | Evidence |
+| --- | --- | --- |
+| F2 EditMode runner overstates success | `scripts/verify-unity-editmode.ps1` now fails closed: requires Unity exit 0 **and** non-empty parseable `editmode-results.xml` with zero failures via shared `Test-NUnitResultXml`; missing/invalid result fails even on exit 0 | `scripts/cert-script-helpers.ps1::Test-NUnitResultXml`; `scripts/Test-CertificationScripts.ps1` (16/16) |
+| T2 PlayMode runner only checked artifact existence | `scripts/verify-unity-playmode.ps1` now validates completed-result XML with zero failures, not mere presence | same helpers + tests |
+| F3 Android smoke target selection not fail-closed (C1) | `scripts/verify-android-smoke.ps1` adds `-DeviceSerial`, fails early on ambiguity/offline/unauthorized, binds **every** adb command to the chosen serial, records manufacturer/model/release/SDK/ABI/step-counter, APK SHA-256, package id and source SHA; labels emulator/no-step-counter runs `lifecycle-only`; preserves logcat/summary on failure (C3) | `Select-AndroidTarget` / `Get-AndroidDeviceMetadata` / `Get-FileSha256` + tests |
+| F3.4 / §3.4 deterministic script regression | new `scripts/Test-CertificationScripts.ps1` (engine-free, no Unity/adb/device) covering result-XML parsing (NUnit2+NUnit3, pass/fail/malformed/missing/no-tests) and target selection (single/multi/preferred/absent/offline/empty) | **16/16 PASS** |
+| R4 Editor toolchain identity preflight | new `Get-UnityPinnedVersion` / `Test-UnityEditorMatchesPin` in `cert-script-helpers.ps1`; wired into `verify-unity-editmode.ps1` and `verify-unity-playmode.ps1` so a wrong/unpinned editor fails closed before launch | helpers + `Test-CertificationScripts.ps1` (R4 cases) |
+| R6 Idempotent clean-install uninstall | new `Uninstall-AndroidPackageIdempotent` (absent = clean success; still-installed removal failure = real failure); used for pre-install and final cleanup in `verify-android-smoke.ps1` | helpers + `Test-CertificationScripts.ps1` (R6 cases) |
+| R7 try/finally summary discipline | `verify-android-smoke.ps1` restructured to write summary JSON + logcat in a `finally` block after optional uninstall, recording `finalDisposition` | `Test-CertificationScripts.ps1` (R7 structural) |
+| R17.2.10 foreground/resumed launch evidence | new `Get-AndroidForegroundActivity`; smoke fails if the expected package is not the foreground/resumed activity, not merely process-alive | helpers + `Test-CertificationScripts.ps1` (R17.2.10 cases) |
+| R5 adb serial-binding audit | confirmed every direct adb call (`pidof`, `logcat`, `am`, `pm`, `settings`, `input`) routes through the serial-bound `Invoke-Adb` | `Select-AndroidTarget` + tests |
+
+### M8.6 certification matrix
+
+| Gate | Result | Evidence |
+| --- | --- | --- |
+| Repository identity (live) | PASS | `Assert-RepoIdentity.ps1` exit 0 pre-work and before integration |
+| Domain suite | PASS | **213/213** (`dotnet test`, fresh this campaign) |
+| verify-domain.ps1 | PASS | same suite + restore check, exit 0 |
+| Unity static audit | PASS | 107 assets / 107 metas, Unity 6000.3.4f1 pin (`verify-unity-static.ps1`) |
+| Release hygiene / privacy audit | PASS | 63 runtime sources scanned, manifest minimal (`verify-release-hygiene.ps1`) |
+| Agent guard suites | PASS | **36/36** (ps + sh + hook tiers; `Test-AgentGuards.ps1`) |
+| Certification-script regression | PASS | **35/35** (`scripts/Test-CertificationScripts.ps1`, covering R4/R6/R7/R17.2.10 + parse-only checks) |
+| `git diff --check` | PASS | clean at final gate run (CRLF normalization only) |
+| Unity import/compile (U1–U6) | **UNVERIFIED** | no Unity `6000.3.4f1` editor installed; repro: install pinned editor, sign into Hub, activate, `scripts/setup-unity-project.ps1`, then `verify-unity-editmode.ps1`. Planner-predicted `WalkGameEditorTools.cs` namespace references (F1) could not be reproduced without an editor — left as predicted, not claimed fixed. |
+| EditMode (T1/T3/T4) | **UNVERIFIED** | same editor/license blocker |
+| PlayMode (T2/T3/T4) | **UNVERIFIED** | same editor/license blocker |
+| Android IL2CPP/ARM64 build (A1–A4) | **UNVERIFIED** | Android Build Support (`AndroidPlayer`) absent (editor not installed); repro: install Build Support + SDK/NDK, `scripts/build-android-development.ps1` |
+| Android lifecycle smoke (L1–L5) | **UNVERIFIED (script ready)** | hardened `verify-android-smoke.ps1` rewritten this session with R6 idempotent uninstall, R7 `finally` summary, and R17.2.10 foreground-activity evidence; parse-checked + engine-free tested; no APK/device to run it against |
+| Physical step sensor (P1–P11) | **UNVERIFIED** | no physical device exposing `android.hardware.sensor.stepcounter`; no connected adb target |
+| Vertical-slice UX (V1–V5) | **UNVERIFIED** | no device |
+| Performance/battery/thermal (F1–F6) | **UNVERIFIED** | no device; no profiling target |
+| iOS (I1–I7) | **UNVERIFIED** | no macOS/Xcode/signing/device |
+
+### Deliberate remaining limitations (M8.6)
+
+- Every EDITOR/DEVICE/iOS gate stays UNVERIFIED by a precise environment blocker (no
+  licensed Unity editor, no Android Build Support, no physical device, no macOS), not by
+  missing repository work. The planner-predicted `WalkGameEditorTools.cs` compile issues
+  (F1) were neither reproduced nor fixed because doing so would require a licensed editor;
+  they remain predicted findings, honestly uncertified.
+- The certification harness itself is now fail-closed and identity-binding, so any future
+  licensed run will produce trustworthy evidence rather than a false PASS.
+- This session additionally closed the re-audit's script-level findings: R4 editor-identity
+  preflight, R6 idempotent uninstall, R7 `finally` summary persistence, and R17.2.10
+  foreground/resumed launch evidence are implemented and locked by engine-free tests (35/35),
+  so the harness is now strictly fail-closed end-to-end for those tiers. Their *runtime*
+  enforcement remains UNVERIFIED only because the licensed editor / device is absent.
+
+### Next-campaign recommendation
+
+Because the dominant M8 risk (real Unity + Android device readiness) could not be retired
+in this environment, the next campaign should still target **M8 Device Ready / M9 Closed
+Playtest Readiness** — but it must run on a host with a licensed Unity editor and, ideally,
+a physical step-counter Android device. If a measured exactly-once or performance blocker
+emerges only under a real editor/device, that measured blocker should drive a focused
+follow-up campaign.

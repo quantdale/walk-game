@@ -14,7 +14,7 @@ Testing must therefore prioritize:
 
 ## 1A. Current campaign evidence
 
-As of 2026-08-26 (M8.5 runtime ownership & rollback fidelity, ADR 0011), `dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj`
+As of 2026-08-27 (M8.5 runtime ownership & rollback fidelity, ADR 0011; M8.6 Unity first-import & device-readiness certification executed, re-audit R1-R9 hardening applied), `dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj`
 passes **213/213** and `scripts/verify-unity-static.ps1` passes the pinned Unity version,
 asset metadata, package invariants, and Bootstrap scene checks (107 assets/107 metas).
 `scripts/verify-release-hygiene.ps1` adds a CI-runnable privacy/release audit (no GPS/save-path
@@ -37,6 +37,34 @@ The coordinator, `GameHost.CommitChangesWithOutcome()`, `OperationLease`/`Provid
 and `ExpeditionResultPresentation` are the extracted, headlessly certified surface; ticker and
 Expedition frame timing, scene composition, and provider JNI / CoreMotion callbacks remain
 UNVERIFIED without an editor/device.
+
+### M8.6 certification-harness hardening (AUTOMATED)
+
+M8.6 executed the in-repo, editor/device-independent certification work and left every
+EDITOR/DEVICE/iOS lane `UNVERIFIED` by a precise environment blocker (no licensed Unity editor,
+no Android Build Support, no physical device, no macOS). The harness itself was made fail-closed:
+
+- `scripts/verify-unity-editmode.ps1` and `scripts/verify-unity-playmode.ps1` now require a
+  non-empty, parseable NUnit result XML with **zero failures** (shared `Test-NUnitResultXml` in
+  `scripts/cert-script-helpers.ps1`). A Unity exit 0 with a missing/invalid/incomplete result
+  file now fails the gate instead of overstating success.
+- `scripts/verify-android-smoke.ps1` now binds **every** `adb` command to one exact serial via a
+  new `-DeviceSerial` option; with no serial it fails closed unless exactly one authorized/online
+  target is present, and records manufacturer/model/release/SDK/ABI, step-counter availability,
+  APK SHA-256 and source SHA. Emulator/no-step-counter runs are labeled `lifecycle-only`.
+- A 288-file deep re-audit added mandatory evidence-integrity findings (R1-R9 / E1-E10). This
+  session closed the script-level ones engine-free: a fail-closed **R4** Unity toolchain-identity
+  preflight (`Get-UnityPinnedVersion` / `Test-UnityEditorMatchesPin`) wired into both test wrappers;
+  **R6** idempotent clean-install uninstall (`Uninstall-AndroidPackageIdempotent`); **R7** `finally`
+  summary/logcat persistence with `finalDisposition`; and **R17.2.10** foreground/resumed launch
+  evidence (`Get-AndroidForegroundActivity`). `R5` serial-binding of every direct `adb` call was audited
+  and confirmed.
+- New `scripts/Test-CertificationScripts.ps1` (engine-free, no Unity/adb/device) locks these
+  semantics with **35/35** regression checks (up from 16/16) and is part of the local gate set.
+
+Unity compile/EditMode/PlayMode, Android IL2CPP/ARM64 build, physical step-counter exactly-once,
+UX and performance/battery/thermal remain **UNVERIFIED** until a licensed editor and reference
+hardware are available.
 
 The procedural environment kit uses shared materials, property blocks for state tinting,
 static geometry after construction, reused UI rows, and `Physics.OverlapSphereNonAlloc`
