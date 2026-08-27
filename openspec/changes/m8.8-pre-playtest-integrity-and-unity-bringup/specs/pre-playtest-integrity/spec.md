@@ -1,6 +1,6 @@
 # M8.8 Spec — Pre-Playtest Integrity & Unity Bring-Up Closure
 
-Status: ACTIVE
+Status: COMPLETE
 Normative language: MUST / MUST NOT / SHOULD
 
 ## S1 — Repository truth and reconciliation

@@ -1,6 +1,7 @@
 # M8.8 Tasks — Pre-Playtest Integrity & Unity Bring-Up Closure
 
-Status: ACTIVE
+Status: SUPERSEDED
+Execution checklist: `tasks-revision-2026-08-28.md`
 Planned-From: main@cf260d04fefbb2d5e7da265de5ae03a9aa768a0a
 Autonomous work budget: up to 12 hours
 Executor rule: continue across every legitimately executable workstream. Do not stop after the first fix. Do not manufacture unrelated work to consume wall-clock time.

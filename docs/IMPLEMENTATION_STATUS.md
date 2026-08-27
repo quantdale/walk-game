@@ -16,9 +16,9 @@ Last updated: 2026-08-28 (M8.8 re-audited completion campaign; current top-level
 
 ## Current verification status — M8.8 re-audit
 
-- Source was reconciled onto `main` at `15947a222b9812cb641066f40cb8e48a276207c7`; the
-  campaign writer lease is held on this worktree. Repository identity passed before source
-  and documentation changes.
+- Source was reconciled onto `main` at `15947a222b9812cb641066f40cb8e48a276207c7` and the
+  implementation was published as `0190c8ab59331f72e4b2ffa1636139ece6b4ab13`; repository
+  identity passed before source and documentation changes.
 - Fresh headless evidence after the M8.8 changes: domain suite **263/263 PASS**;
   `verify-domain.ps1` **PASS**; Unity static audit **112/112 PASS**; release-hygiene audit
   **63 runtime sources PASS**; `Test-AgentGuards.ps1` **43/43 PASS**; certification-script
@@ -723,7 +723,7 @@ historical snapshots and retain their original counts for traceability.
 | Agent guards | VERIFIED PASS | `scripts/Test-AgentGuards.ps1`: **43 passed, 0 failed**; real-hook reasons are asserted |
 | Certification-script fixtures | VERIFIED PASS | `scripts/Test-CertificationScripts.ps1`: **71 passed, 0 failed** |
 | Diff whitespace | VERIFIED PASS | `git diff --check` clean |
-| Required remote CI | PENDING FINAL PUBLICATION | Must be checked against the final pushed SHA; a local green run is not a CI claim |
+| Required remote CI | VERIFIED PASS | [domain-tests #26](https://github.com/quantdale/walk-game/actions/runs/33120316547) succeeded for implementation SHA `0190c8ab59331f72e4b2ffa1636139ece6b4ab13` |
 
 ### Finding disposition
 

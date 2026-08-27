@@ -1,7 +1,8 @@
 # M8.8 Tasks Revision — 2026-08-28
 
-Status: EXECUTED LOCALLY; FINAL CI/PUBLICATION PENDING
+Status: COMPLETE
 Baseline: main@95606565c44b7bab04e434856ad9cd65dbefd101
+Executor implementation SHA: main@0190c8ab59331f72e4b2ffa1636139ece6b4ab13
 Purpose: smallest effective sequence after fresh whole-repository re-audit
 Autonomous budget: up to approximately 12 hours of legitimate work
 
@@ -149,7 +150,7 @@ Exit: no P0/P1 user-facing blocker; measured targets/dispositions recorded.
 - [ ] iOS Xcode/build/device when available; **UNVERIFIED — no macOS/Xcode/device.**
 - [x] no unexpected dirty/generated state introduced by the scripts; build artifacts are ignored and no opaque project state was hand-authored.
 - [x] no secrets/debug artifacts;
-- [ ] CI green at final SHA. **PENDING FINAL PUBLICATION.**
+- [x] CI green at implementation SHA: [domain-tests #26](https://github.com/quantdale/walk-game/actions/runs/33120316547).
 
 Update:
 - [x] OpenSpec evidence and task states;
@@ -163,14 +164,15 @@ Exit:
 - [x] all locally executable requirements complete;
 - [x] no known P0/P1 deterministic source or process blocker;
 - [x] external tiers have exact UNVERIFIED blockers if absent;
-- [ ] execution prompt changed to COMPLETE only at truthful completion; **PENDING final CI/publication.**
-- [ ] final commit/push performed normally with no force. **PENDING.**
+- [x] execution prompt changed to COMPLETE only at truthful completion.
+- [x] final implementation commit/push performed normally with no force.
 
 ## Executor evidence — 2026-08-28
 
 The reconciled source baseline was `main@15947a222b9812cb641066f40cb8e48a276207c7`.
+The implementation publication was `main@0190c8ab59331f72e4b2ffa1636139ece6b4ab13`.
 Fresh local results are 263/263 domain, 112/112 Unity-static, 63 release-hygiene sources,
 43/43 agent guards, and 71/71 certification-script checks. Unity, Android Build Support /
 APK / device, macOS/Xcode/iOS, and measured UX/performance remain UNVERIFIED for the
-environment reasons recorded in `docs/IMPLEMENTATION_STATUS.md`. Required remote CI and
-normal final publication remain pending until the final worktree is gated and pushed.
+environment reasons recorded in `docs/IMPLEMENTATION_STATUS.md`. Required remote CI
+completed successfully in [domain-tests #26](https://github.com/quantdale/walk-game/actions/runs/33120316547).

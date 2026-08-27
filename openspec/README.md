@@ -2,15 +2,18 @@
 
 This directory is the canonical specification surface for implementation campaigns planned after the M8.4 hardening cycle.
 
-## Current active change
+## Current completed change
 
 - **M8.8 — Pre-Playtest Integrity & Unity Bring-Up Closure**
 - Canonical package: `openspec/changes/m8.8-pre-playtest-integrity-and-unity-bringup/`
-- Planned from: `main@cf260d04fefbb2d5e7da265de5ae03a9aa768a0a`
+- Reconciled from: `main@15947a222b9812cb641066f40cb8e48a276207c7`
+- Implementation publication: `main@0190c8ab59331f72e4b2ffa1636139ece6b4ab13`
 - Executor adapter: `.agent/EXECUTION_PROMPT.md`
 - Autonomous work budget: up to 12 hours.
 
-M8.7 remains COMPLETE. M9 Closed Playtest Readiness is intentionally gated behind M8.8 because the current audit found confirmed Editor semantic-compilation and save-migration defects plus a missing standalone semantic-compile evidence gate.
+M8.8 is complete at the locally executable implementation tier. M9 Closed Playtest
+Readiness is not a claim of production certification: Unity/device/Apple/performance
+evidence remains explicitly UNVERIFIED as recorded in the implementation status.
 
 ## Change layout
 
