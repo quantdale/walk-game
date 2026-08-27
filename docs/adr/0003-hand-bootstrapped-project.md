@@ -31,6 +31,23 @@ The project structure was authored by hand:
 - `WalkGame/Setup/Configure URP and Input System` (editor menu) creates and assigns the
   URP asset and switches input handling on first open; run it once after opening.
 
+## M8.8 amendment — generated-state provenance and platform build identity
+
+The hand-bootstrapped source remains the authority until a licensed editor is available;
+agents must not invent serialized Unity YAML to make a static gate appear complete. A
+licensed first-import run may materialize only Unity-generated canonical state (the
+resolved package lock, canonical project settings, and the URP asset), and the semantic
+compile evidence must bind the source SHA, dirty state, timestamps, editor identity, log,
+and any accepted canonical mutations. A second clean checkout and idempotent setup are
+required before those generated files are treated as reproducible build inputs.
+
+The Android release-shaped entry point preserves minSdk 26 and targets API 36+, verifying
+the generated APK manifest. The iOS entry point binds bundle identifier
+`com.quantdale.walkgame` and minimum deployment target 16.0, while the macOS wrapper
+records Unity/Xcode/SDK/project/build evidence and requires Xcode 26+/iOS 26+ for any
+current App Store readiness claim. Neither external lane is claimed as verified without
+its editor/toolchain and device evidence.
+
 ## Consequences
 
 - First open in Unity 6.3 LTS should: let it recompile/import, then run the setup menu

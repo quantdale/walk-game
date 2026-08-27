@@ -31,14 +31,6 @@ $ZeroOid = ('0' * 40)
 $script:PassCount = 0
 $script:FailCount = 0
 
-function ToPosix([string]$Path) {
-    if (-not $Path) { return $Path }
-    # Git Bash in this sandbox can execute files at a drive-letter forward-slash
-    # Windows path (D:/a/b) when the process CWD is inherited, even though it
-    # cannot `cd` into such paths from a `bash -c` subshell.
-    return $Path.Replace('\\', '/')
-}
-
 # Runs a bash command with the working directory set to $Dir. The CWD is set
 # via Push-Location (pwsh) so the launched bash process INHERITS the working
 # directory. This matters because the sandbox Git Bash cannot `cd` into the
@@ -74,7 +66,15 @@ New-Item -ItemType Directory -Path $Tmp | Out-Null
 
 $PwshExe = (Get-Process -Id $PID).Path
 if (-not $PwshExe) { $PwshExe = 'pwsh' }
-$BashExe = (Get-Command bash -ErrorAction SilentlyContinue).Source
+
+# Prefer the real Git Bash executable on Windows. `C:\Windows\System32\bash.exe`
+# is the WSL launcher and does not preserve the environment/cwd contract this
+# PowerShell suite needs when it invokes a second shell inside a fixture.
+$gitBashCandidates = @()
+if ($env:ProgramFiles) { $gitBashCandidates += (Join-Path $env:ProgramFiles 'Git\bin\bash.exe') }
+if ($env:ProgramW6432) { $gitBashCandidates += (Join-Path $env:ProgramW6432 'Git\bin\bash.exe') }
+$BashExe = $gitBashCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $BashExe) { $BashExe = (Get-Command bash -ErrorAction SilentlyContinue).Source }
 
 $FingerprintFiles = @(
     'Assets/WalkGame/App/GameHost.cs',
@@ -127,7 +127,7 @@ function Run-Guard {
         else {
             $shDir = if ($ScriptDir) { $ScriptDir } else { $Dir }
             $argStr = ($GuardArgs -join ' ')
-            $code = Invoke-BashIn $shDir "bash '$(ToPosix (Join-Path $shDir 'scripts/assert-repo-identity.sh'))' $argStr"
+            $code = Invoke-BashIn $shDir "./scripts/assert-repo-identity.sh $argStr"
             return $code
         }
         return $LASTEXITCODE
@@ -177,10 +177,16 @@ function Run-RaceCheck {
             & $PwshExe -NoProfile -File "$RepoRoot/scripts/Check-RemoteAdvance.ps1" @rcArgs *> $null
         }
         else {
-            # $Dir may be a plain clone without copied scripts; use the canonical script.
-            $script = ToPosix "$RepoRoot/scripts/check-remote-advance.sh"
+            # $Dir may be a plain clone without copied scripts. Copy the canonical
+            # test script into that fixture, then use a relative path so Git Bash
+            # inherits the working directory without a drive-letter path conversion.
+            $scriptPath = Join-Path $Dir 'scripts/check-remote-advance.sh'
+            if (-not (Test-Path $scriptPath)) {
+                New-Item -ItemType Directory -Path (Split-Path $scriptPath -Parent) -Force | Out-Null
+                Copy-Item (Join-Path $RepoRoot 'scripts/check-remote-advance.sh') $scriptPath -Force
+            }
             $b = if ($Branch) { " $Branch" } else { '' }
-            $code = Invoke-BashIn $Dir "bash '$script'$b"
+            $code = Invoke-BashIn $Dir "./scripts/check-remote-advance.sh$b"
             return $code
         }
         return $LASTEXITCODE
@@ -197,7 +203,11 @@ function New-HookFixture {
     $dir = Join-Path $Tmp $Name
     git clone -q $OriginPath $dir
     git -C $dir remote set-url origin 'https://github.com/quantdale/walk-game.git'
-    git -C $dir config "url.file://$OriginPath.insteadOf" 'https://github.com/quantdale/walk-game.git'
+    # Keep the configured fetch origin canonical so the production identity
+    # guard sees exactly the same URL a real checkout would. A local push URL
+    # provides fixture-only transport for the hook/race probes without a
+    # url.*.insteadOf rewrite that changes `git remote get-url origin`.
+    git -C $dir remote set-url --push origin "file://$OriginPath"
     foreach ($f in ($FingerprintFiles + @('.repo-identity.json', 'ProjectSettings/ProjectVersion.txt'))) {
         $src = Join-Path $RepoRoot $f
         if (Test-Path $src) {
@@ -209,6 +219,23 @@ function New-HookFixture {
     Copy-Item (Join-Path $RepoRoot 'scripts') (Join-Path $dir 'scripts') -Recurse -Force
     Copy-Item (Join-Path $RepoRoot '.githooks') (Join-Path $dir '.githooks') -Recurse -Force
     return $dir
+}
+
+# Exercise the actual hook from an inherited fixture CWD. Using a relative hook
+# path avoids Git Bash's inability to resolve a Windows drive-letter path passed
+# through `bash -c`. Return both the exit code and captured reason text so a
+# negative case cannot pass merely because identity preflight failed first.
+function Invoke-Hook {
+    param([string]$Dir, [string]$InputLine)
+    Push-Location $Dir
+    try {
+        $hookOutput = @((($InputLine + [Environment]::NewLine) | & $BashExe -c "./.githooks/pre-push") 2>&1)
+        [pscustomobject]@{
+            ExitCode = [int]$LASTEXITCODE
+            Output = ($hookOutput -join [Environment]::NewLine)
+        }
+    }
+    finally { Pop-Location }
 }
 
 $HaveBash = [bool]$BashExe
@@ -346,31 +373,28 @@ else {
     Record '[ps1] S11e unreachable origin fails closed (env error)' ((Run-RaceCheck 'ps1' $unreachable) -eq 2)
     Record '[sh]  S11e unreachable origin fails closed (env error)' ((Run-RaceCheck 'sh' $unreachable) -eq 2)
 
-    # exercise the real pre-push hook with synthetic stdin.
-    git -C $work fetch -q origin
+    # exercise the real pre-push hook with synthetic stdin. The fixture's
+    # canonical fetch URL is deliberately not contacted; the local push URL is
+    # the isolated transport used by the production hook/race logic.
     $remoteOid = (git -C $work rev-parse origin/main).Trim()
-    $hook = ToPosix "$RepoRoot/.githooks/pre-push"
-    $posixWork = ToPosix $work
-    ("refs/heads/main {0} refs/heads/main {1}" -f $localOid, $remoteOid) |
-        & $BashExe -c "cd '$posixWork' && bash '$hook'" *> $null
-    $hookBlocked = ($LASTEXITCODE -eq 1)
+    $hookRace = Invoke-Hook $work ("refs/heads/main {0} refs/heads/main {1}" -f $localOid, $remoteOid)
+    $hookBlocked = ($hookRace.ExitCode -eq 1) -and ($hookRace.Output -match 'advanced during this session')
 
-        ("refs/heads/main {0} refs/heads/main {1}" -f $ZeroOid, $remoteOid) |
-            & $BashExe -c "cd '$posixWork' && bash '$hook'" *> $null
-        $deleteBlocked = ($LASTEXITCODE -eq 1)
+    $hookDelete = Invoke-Hook $work ("refs/heads/main {0} refs/heads/main {1}" -f $ZeroOid, $remoteOid)
+    $deleteBlocked = ($hookDelete.ExitCode -eq 1) -and ($hookDelete.Output -match 'refusing deletion of refs/heads/main')
 
-        # M8.7 H5: first push to a genuinely absent branch must be allowed.
-        ("refs/heads/feat/brand-new {0} refs/heads/feat/brand-new {1}" -f $localOid, $remoteOid) |
-            & $BashExe -c "cd '$posixWork' && bash '$hook'" *> $null
-        $firstPushAllowed = ($LASTEXITCODE -eq 0)
+    # M8.7 H5: first push to a genuinely absent branch must be allowed.
+    $hookFirst = Invoke-Hook $work ("refs/heads/feat/brand-new {0} refs/heads/feat/brand-new {1}" -f $localOid, $remoteOid)
+    $firstPushAllowed = ($hookFirst.ExitCode -eq 0) -and ($hookFirst.Output -match 'does not exist; allowing first push')
 
-        # M8.7 H5: an unqueryable origin must refuse the push (not allow it).
-        git -C $work remote set-url origin 'https://github.com/quantdale/walk-game.git'
-        git -C $work config 'url.file:///nonexistent-bare.git.insteadOf' 'https://github.com/quantdale/walk-game.git'
-        ("refs/heads/feat/ghost {0} refs/heads/feat/ghost {1}" -f $localOid, $remoteOid) |
-            & $BashExe -c "cd '$posixWork' && bash '$hook'" *> $null
-        $unreachableRefused = ($LASTEXITCODE -eq 1)
-    Record '[hook] S11f pre-push refuses force-shaped push' $hookBlocked
+    # M8.7 H5: an unqueryable origin must refuse the push (not allow it), and
+    # the assertion must reach the intended race-query error rather than the
+    # identity guard. Replace only the fixture push transport with a known
+    # missing local bare repo; keep the canonical origin URL unchanged.
+    git -C $work remote set-url --push origin 'file:///nonexistent-bare.git'
+    $hookUnreachable = Invoke-Hook $work ("refs/heads/feat/ghost {0} refs/heads/feat/ghost {1}" -f $localOid, $remoteOid)
+    $unreachableRefused = ($hookUnreachable.ExitCode -eq 1) -and ($hookUnreachable.Output -match 'could not query origin for refs/heads/feat/ghost')
+    Record '[hook] S11f pre-push refuses non-ancestor race' $hookBlocked
     Record '[hook] S11g pre-push refuses remote deletion' $deleteBlocked
     Record '[hook] S11h pre-push allows first push to absent branch' $firstPushAllowed
     Record '[hook] S11i pre-push refuses when origin unqueryable' $unreachableRefused

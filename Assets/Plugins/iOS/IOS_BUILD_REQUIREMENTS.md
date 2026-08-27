@@ -1,7 +1,8 @@
 # iOS build requirements — Walk Game
 
-Applied by the post-build editor hook (`WalkGameEditorTools.AddPedometerUsageDescription`)
-when generating the Xcode project:
+Applied by `IosPedometerPlistPostprocessor` when the deterministic
+`WalkGame.EditorTools.WalkGameEditorTools.BuildIosXcodeDevelopment` entry point
+generates the Xcode project:
 
 ## Info.plist keys
 
@@ -14,6 +15,18 @@ when generating the Xcode project:
 ## Frameworks
 
 Unity links CoreMotion automatically via the .mm plugin's `#import <CoreMotion/CoreMotion.h>`.
+
+## Certification command
+
+On macOS, set `UNITY_EDITOR_PATH` to the pinned Unity `6000.3.4f1` editor and run
+`scripts/build-ios-xcode.ps1`. The wrapper requires Xcode 26 or later and an iOS
+26 or later SDK for current App Store submission readiness, records separate Unity
+and Xcode logs plus source/tool/output hashes, and fails closed if the generated
+bundle identifier, CoreMotion bridge, or motion-usage key is missing. Signing and
+device installation are opt-in (`-Sign -SigningTeamId -DeviceSerial`) and no
+provisioning material belongs in Git.
+
+The current Apple SDK floor is documented by [Apple's upcoming requirements](https://developer.apple.com/news/upcoming-requirements/).
 
 ## Review gates
 

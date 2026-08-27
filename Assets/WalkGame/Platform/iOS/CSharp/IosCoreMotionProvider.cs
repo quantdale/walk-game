@@ -31,10 +31,17 @@ namespace WalkGame.Platform.iOS
             new Dictionary<int, TaskCompletionSource<IosQueryOutcome>>();
         private static bool _callbackRegistered;
         private static int _lastIssuedRequestId;
+        private static int _nextProviderGeneration;
+        // Keep the delegate rooted for the entire process. IL2CPP/native code may
+        // call back after the original method-group temporary would otherwise be
+        // eligible for collection (M8.8 P2 / AOT lifetime contract).
+        private static readonly QueryResultCallback ManagedQueryResultCallback = OnQueryResult;
 
         private readonly object _gate = new object();
         private readonly Core.Log _log;
         private readonly IosHistoryWindowPlanner _planner = new IosHistoryWindowPlanner();
+        private readonly int _providerGeneration;
+        private readonly HashSet<int> _pendingRequestIds = new HashSet<int>();
         private ActiveSessionState _session;
         private double _sessionStartLiveSteps;
         private bool _shutdown;
@@ -43,10 +50,17 @@ namespace WalkGame.Platform.iOS
         {
             Clock = clock ?? throw new ArgumentNullException(nameof(clock));
             _log = log ?? Core.Log.Disabled;
+            lock (PendingGate)
+            {
+                _providerGeneration = ++_nextProviderGeneration;
+            }
             RegisterCallbackOnce();
         }
 
         public IClock Clock { get; }
+
+        /// <summary>Monotonic provider-generation identity used by lifecycle diagnostics.</summary>
+        public int ProviderGeneration => _providerGeneration;
 
         public string ProviderId => ProviderIdValue;
 
@@ -69,13 +83,16 @@ namespace WalkGame.Platform.iOS
 
         private static void RegisterCallbackOnce()
         {
-            if (_callbackRegistered)
+            lock (PendingGate)
             {
-                return;
-            }
+                if (_callbackRegistered)
+                {
+                    return;
+                }
 
-            _callbackRegistered = true;
-            WG_SetQueryResultCallback(OnQueryResult);
+                _callbackRegistered = true;
+                WG_SetQueryResultCallback(ManagedQueryResultCallback);
+            }
         }
 
         [MonoPInvokeCallback(typeof(QueryResultCallback))]
@@ -96,7 +113,7 @@ namespace WalkGame.Platform.iOS
         }
 
         /// <summary>Issues one async query; null outcome means start failure or timeout.</summary>
-        private static async Task<IosQueryOutcome?> QueryAsync(double startUnix, double endUnix)
+        private async Task<IosQueryOutcome?> QueryAsync(double startUnix, double endUnix)
         {
             int requestId;
             var source = new TaskCompletionSource<IosQueryOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -113,18 +130,48 @@ namespace WalkGame.Platform.iOS
                 PendingQueries[requestId] = source;
             }
 
-            var completed = await Task.WhenAny(source.Task, Task.Delay(QueryTimeout));
-            if (completed != source.Task)
+            lock (_gate)
             {
-                lock (PendingGate)
+                if (_shutdown)
                 {
-                    PendingQueries.Remove(requestId); // late native answers are dropped as stale
+                    lock (PendingGate)
+                    {
+                        PendingQueries.Remove(requestId);
+                    }
+                    source.TrySetCanceled();
                 }
-
-                return null;
+                else
+                {
+                    _pendingRequestIds.Add(requestId);
+                }
             }
 
-            return await source.Task;
+            try
+            {
+                var completed = await Task.WhenAny(source.Task, Task.Delay(QueryTimeout));
+                if (completed != source.Task)
+                {
+                    lock (PendingGate)
+                    {
+                        PendingQueries.Remove(requestId); // late native answers are dropped as stale
+                    }
+
+                    return null;
+                }
+
+                return await source.Task;
+            }
+            catch (OperationCanceledException)
+            {
+                return null;
+            }
+            finally
+            {
+                lock (_gate)
+                {
+                    _pendingRequestIds.Remove(requestId);
+                }
+            }
         }
 
         private readonly struct IosQueryOutcome
@@ -151,6 +198,11 @@ namespace WalkGame.Platform.iOS
         /// </summary>
         public async Task<ActivityPermissionState> RequestMotionPermissionAsync()
         {
+            if (_shutdown)
+            {
+                return ActivityPermissionState.Unavailable;
+            }
+
             var before = (ActivityPermissionState)WG_GetAuthorizationStatus();
             if (before != ActivityPermissionState.NotDetermined)
             {
@@ -162,7 +214,7 @@ namespace WalkGame.Platform.iOS
             await QueryAsync(ToUnix(nowUtc.AddMinutes(-1)), ToUnix(nowUtc));
 
             DateTime deadline = Clock.UtcNow + RequestPollTimeout;
-            while (Clock.UtcNow < deadline)
+            while (!_shutdown && Clock.UtcNow < deadline)
             {
                 await Task.Delay(300);
                 var current = (ActivityPermissionState)WG_GetAuthorizationStatus();
@@ -172,11 +224,23 @@ namespace WalkGame.Platform.iOS
                 }
             }
 
-            return ActivityPermissionState.NotDetermined;
+            return _shutdown ? ActivityPermissionState.Unavailable : ActivityPermissionState.NotDetermined;
         }
 
         public Task<ActivityCapability> GetCapabilityAsync()
         {
+            lock (_gate)
+            {
+                if (_shutdown)
+                {
+                    return Task.FromResult(new ActivityCapability
+                    {
+                        motionPermission = ActivityPermissionState.Unavailable,
+                        locationPermission = ActivityPermissionState.Unavailable,
+                    });
+                }
+            }
+
             var capability = new ActivityCapability
             {
                 supportsPassiveSteps = WG_IsPedometerAvailable() != 0,
@@ -280,6 +344,7 @@ namespace WalkGame.Platform.iOS
         /// </summary>
         public void Shutdown()
         {
+            int[] pendingRequestIds;
             lock (_gate)
             {
                 if (_shutdown)
@@ -289,6 +354,23 @@ namespace WalkGame.Platform.iOS
 
                 _shutdown = true;
                 _session = null;
+                pendingRequestIds = new List<int>(_pendingRequestIds).ToArray();
+                _pendingRequestIds.Clear();
+            }
+
+            // Remove and cancel all callbacks owned by this provider generation.
+            // Native late answers then find no request entry and are discarded by
+            // OnQueryResult instead of completing a replacement provider's work.
+            lock (PendingGate)
+            {
+                foreach (int requestId in pendingRequestIds)
+                {
+                    if (PendingQueries.TryGetValue(requestId, out var source))
+                    {
+                        PendingQueries.Remove(requestId);
+                        source.TrySetCanceled();
+                    }
+                }
             }
 
             try

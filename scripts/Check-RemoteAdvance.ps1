@@ -41,7 +41,12 @@ Write-Host "fetching origin/$Branch for race check..."
 # M8.7 H5: an absent new branch must be positively distinguished from a
 # transport/auth failure. Query the exact ref first; only a confirmed absence
 # means "new branch", while a failed query fails closed.
-$probe = (& git ls-remote --heads origin "refs/heads/$Branch") 2>$null
+$remoteUrl = (& git remote get-url --push origin) 2>$null
+if ($LASTEXITCODE -ne 0 -or -not $remoteUrl) { FailEnv "could not determine origin push transport" }
+$remoteUrl = "$remoteUrl".Trim()
+if (-not $remoteUrl) { FailEnv 'origin has no usable push transport' }
+
+$probe = (& git ls-remote --heads $remoteUrl "refs/heads/$Branch") 2>$null
 if ($LASTEXITCODE -ne 0) { FailEnv "could not query origin for '$Branch' (transport/auth)" }
 
 if (-not $probe) {
@@ -49,7 +54,7 @@ if (-not $probe) {
     exit 0
 }
 
-& git fetch --quiet origin $Branch
+& git fetch --quiet $remoteUrl $Branch
 if ($LASTEXITCODE -ne 0) { FailEnv "could not fetch '$Branch' from origin" }
 
 $remote = (& git rev-parse -q --verify 'FETCH_HEAD') 2>$null

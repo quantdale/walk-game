@@ -121,12 +121,26 @@ namespace WalkGame.Gameplay
             int delta = (int)Math.Max(int.MinValue, Math.Min(int.MaxValue, amount));
             switch (scoreType)
             {
-                case "ecology": region.ecologyScore += delta; break;
-                case "infrastructure": region.infrastructureScore += delta; break;
-                case "community": region.communityScore += delta; break;
-                case "knowledge": region.knowledgeScore += delta; break;
+                case "ecology": region.ecologyScore = SaturatingAddInt(region.ecologyScore, delta); break;
+                case "infrastructure": region.infrastructureScore = SaturatingAddInt(region.infrastructureScore, delta); break;
+                case "community": region.communityScore = SaturatingAddInt(region.communityScore, delta); break;
+                case "knowledge": region.knowledgeScore = SaturatingAddInt(region.knowledgeScore, delta); break;
                 default: _log.Warning($"Unknown score type '{scoreType}'."); break;
             }
+        }
+
+        private static int SaturatingAddInt(int a, int b)
+        {
+            long sum = (long)a + b;
+            if (sum > int.MaxValue) return int.MaxValue;
+            if (sum < int.MinValue) return int.MinValue;
+            return (int)sum;
+        }
+
+        private static long SaturatingAddLong(long a, long b)
+        {
+            try { return checked(a + b); }
+            catch (OverflowException) { return b > 0 ? long.MaxValue : long.MinValue; }
         }
 
         public void GrantResource(string resourceId, long amount)
@@ -137,13 +151,13 @@ namespace WalkGame.Gameplay
             }
 
             _profile.resources.TryGetValue(resourceId, out var current);
-            current += amount;
-            if (current < 0)
+            long newValue = SaturatingAddLong(current, amount);
+            if (newValue < 0)
             {
-                current = 0;
+                newValue = 0;
             }
 
-            _profile.resources[resourceId] = current;
+            _profile.resources[resourceId] = newValue;
         }
     }
 }

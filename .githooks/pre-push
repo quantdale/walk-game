@@ -37,7 +37,16 @@ while read -r local_ref local_oid remote_ref _remote_oid; do
     #   1. exact ref exists            -> fetch it and require it an ancestor;
     #   2. exact ref is proven absent  -> a brand-new branch may be pushed normally;
     #   3. origin cannot be queried    -> fail closed (refuse the push).
-    probe=$(git ls-remote --heads origin "refs/heads/$branch" 2>/dev/null)
+    transport=$(git remote get-url --push origin 2>/dev/null) || {
+        echo "PRE-PUSH GUARD: could not determine the origin push transport; refusing push." >&2
+        exit 1
+    }
+    [ -n "$transport" ] || {
+        echo "PRE-PUSH GUARD: origin has no usable push transport; refusing push." >&2
+        exit 1
+    }
+
+    probe=$(git ls-remote --heads "$transport" "refs/heads/$branch" 2>/dev/null)
     if [ $? -ne 0 ]; then
         echo "PRE-PUSH GUARD: could not query origin for $remote_ref (transport/auth); refusing push." >&2
         exit 1
@@ -49,7 +58,7 @@ while read -r local_ref local_oid remote_ref _remote_oid; do
         continue
     fi
 
-    if ! git fetch --quiet origin "$remote_ref" 2>/dev/null; then
+    if ! git fetch --quiet "$transport" "$remote_ref" 2>/dev/null; then
         echo "PRE-PUSH GUARD: could not fetch $remote_ref from origin to prove the race state; refusing push." >&2
         exit 1
     fi

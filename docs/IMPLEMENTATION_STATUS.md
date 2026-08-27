@@ -12,38 +12,34 @@ Evidence tiers:
 - **DEVICE** — requires physical/emulated mobile hardware.
 - **UNVERIFIED** — claimed by no evidence yet.
 
-Last updated: 2026-08-27 (M8.6 Unity first-import & device readiness certification — re-audit R1-R9 hardening executed; editor/device lanes UNVERIFIED by environment)
+Last updated: 2026-08-28 (M8.8 re-audited completion campaign; current top-level evidence below)
 
-## Verification status
+## Current verification status — M8.8 re-audit
 
-- Domain test suite: **213/213 passing (AUTOMATED)** via
-  `dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj`
-  (`scripts/verify-domain.ps1`; also runs in CI on every push/PR to `main`). M8.5 added 28 headless scenarios (185 → 213):
-  provider lifetime, operation-ownership races, Android claim identity, vehicle-path transaction convergence,
-  durability-gated presentation, dirty-target rollback fidelity, and dedup canonicalization.
-- CI domain gate: configured (`.github/workflows/domain-tests.yml`) now including the
-  release-hygiene/privacy audit — **AUTOMATED**.
-- Unity `6000.3.4f1` is installed at `C:\UnityEditors\6000.3.4f1\Editor`, its executable
-  reports the pinned version, and `Data\Resources\PackageManager\Server\UnityPackageManager.exe`
-  is present. M8 re-investigation from scratch confirmed the licensing gate is account-level:
-  Unity Hub 3.21.0 (MSIX) runs but holds **zero logged-in accounts** (`accounts.db` empty), the
-  licensing client reports "Token not found in cache" with 0 entitlement groups and no ULF,
-  and every editor entitlement resolves to `granted: False`. No offline activation path exists
-  without user credentials; fabricating or bypassing licensing is prohibited. Unity compile,
-  EditMode, and PlayMode therefore remain **UNVERIFIED** (reproducible gate: sign into Hub,
-  activate a license, run `scripts/setup-unity-project.ps1`, `scripts/verify-unity-editmode.ps1`,
-  `scripts/verify-unity-playmode.ps1`).
-- Android Build Support remains absent (`AndroidPlayer` missing; only Windows Standalone is
-  installed). A prior Hub module-install attempt is recorded as paused with status
-  `install-queued`, `ELEVATION_CANCELLED`; this session cannot elevate. The committed build
-  entry point now certifies the release-shaped backend (IL2CPP + ARM64, minSdk 26, targetSdk 35).
-  Android build/install/launch and native lifecycle evidence remain **UNVERIFIED**;
-  `scripts/verify-android-smoke.ps1` is committed and ready for the first emulator/device.
-  iOS Xcode generation/build remains **UNVERIFIED** (no macOS/Xcode).
-- Static bring-up audit of assemblies/GUIDs/scenes/packages: **AUTOMATED**; 107 asset files
-  and 107 `.meta` files pass the audit with zero missing real GUID references. The only unresolved
-  scene GUID is Unity's built-in zero GUID for the authored light. (Counts refreshed by the
-  M8.5 campaign; earlier records cited 94/94, then 102/102.)
+- Source was reconciled onto `main` at `15947a222b9812cb641066f40cb8e48a276207c7`; the
+  campaign writer lease is held on this worktree. Repository identity passed before source
+  and documentation changes.
+- Fresh headless evidence after the M8.8 changes: domain suite **263/263 PASS**;
+  `verify-domain.ps1` **PASS**; Unity static audit **112/112 PASS**; release-hygiene audit
+  **63 runtime sources PASS**; `Test-AgentGuards.ps1` **43/43 PASS**; certification-script
+  suite **71/71 PASS**; `git diff --check` **PASS**.
+- H1 editor namespace, H2 strict migration, H5 API 36 source target, M1 spend validation,
+  M2 saturating arithmetic, M3 shader guards, Android permission state-table coverage, and
+  iOS callback/provider-lifetime source safeguards are implemented and headlessly covered.
+  Source/static evidence is not Unity semantic-compile or device evidence.
+- Unity semantic compile/import, EditMode, PlayMode, and first-import canonical project-state
+  materialization are **UNVERIFIED**: this host has no Unity editor executable or licensed
+  session. `scripts/verify-unity-compile.ps1` fails closed when `UNITY_EDITOR_PATH` is absent.
+- Android SDK inventory is present for platform `android-36` and build-tools `36.0.0`, but
+  Unity Android Build Support/IL2CPP is unavailable, no APK was generated, and `adb devices`
+  reports no connected target. Android build, lifecycle, API 36 generated-manifest evidence,
+  and physical step-counter exactly-once evidence are **UNVERIFIED**.
+- iOS Xcode generation/build/device evidence is **UNVERIFIED**: this host is Windows with no
+  macOS, Xcode, iOS SDK, signing environment, or iOS device. The repeatable macOS wrapper and
+  deterministic bundle/project checks are committed.
+
+Older phase and campaign sections below are historical evidence unless explicitly labeled
+with the current M8.8 date and counts.
 
 ## Phase 0 - Foundation
 
@@ -709,3 +705,51 @@ Unity `6000.3.4f1` editor and, ideally, a physical step-counter Android device. 
 measured exactly-once, performance, build, or UX blocker emerges only under real
 hardware, that measured blocker should drive a focused follow-up campaign rather than a
 broad M9 expansion.
+
+## M8.8 re-audited completion evidence — 2026-08-28
+
+This is the current campaign record. The older M8/M8.5/M8.6/M8.7 sections above are
+historical snapshots and retain their original counts for traceability.
+
+### Fresh local gates
+
+| Gate | Result | Evidence / limitation |
+| --- | --- | --- |
+| Repository identity | VERIFIED PASS | `scripts/Assert-RepoIdentity.ps1` exit 0 before mutation; exact repository `quantdale/walk-game` |
+| Domain suite | VERIFIED PASS | `dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj`: **263/263** |
+| `verify-domain.ps1` | VERIFIED PASS | Same current source and standalone restore/test gate |
+| Unity static audit | VERIFIED PASS | `scripts/verify-unity-static.ps1`: **112 assets / 112 metas** |
+| Release hygiene | VERIFIED PASS | `scripts/verify-release-hygiene.ps1`: **63 runtime C# sources** |
+| Agent guards | VERIFIED PASS | `scripts/Test-AgentGuards.ps1`: **43 passed, 0 failed**; real-hook reasons are asserted |
+| Certification-script fixtures | VERIFIED PASS | `scripts/Test-CertificationScripts.ps1`: **71 passed, 0 failed** |
+| Diff whitespace | VERIFIED PASS | `git diff --check` clean |
+| Required remote CI | PENDING FINAL PUBLICATION | Must be checked against the final pushed SHA; a local green run is not a CI claim |
+
+### Finding disposition
+
+| Finding | Disposition | Current evidence |
+| --- | --- | --- |
+| H0 guard fixture / weak hook reasons | CLOSED | Fixture uses local push transport without rewriting canonical origin; S11f/g/h/i assert intended rejection/allow reasons; 43/43 guard suite |
+| H1 Unity editor namespaces | SOURCE FIXED; EDITOR UNVERIFIED | `UnityEngine.Rendering` and `UnityEditor.Build` imports are present; no Unity executable/license on this host |
+| H2 SaveMigrator false success | CLOSED HEADLESS | Minimum/current schema policy, exact +1 migration state machine, repository fail-closed load tests in `M88SaveMigratorContractTests`; 263/263 suite |
+| H3 semantic Unity compile evidence | HARNESS CLOSED; EDITOR UNVERIFIED | `verify-unity-compile.ps1` and false-green fixtures reject launch/compiler/stale/missing-completion/mutation cases; no editor available |
+| H4 generated project state | UNVERIFIED EXTERNAL | No manual opaque Unity assets were added; first-import/package-lock/project/URP materialization and second clean-checkout proof require licensed Unity |
+| H5 Android target | SOURCE/HARNESS CLOSED; BUILD UNVERIFIED | Editor target is API 36, wrapper checks generated APK `targetSdkVersion` with `aapt`; AndroidPlayer/IL2CPP and APK are unavailable |
+| P1 Android permission restart | HEADLESS STATE COVERAGE CLOSED; DEVICE UNVERIFIED | `M88AndroidPermissionStateTableTests`; no connected `adb` target for lifecycle/restart proof |
+| P2 iOS provider lifetime | SOURCE COVERAGE CLOSED; AOT/DEVICE UNVERIFIED | Rooted callback delegate, pending cancellation, provider generations, and source-level tests; no macOS/Xcode/iOS device |
+| M1 spend reason | CLOSED | Empty/null reason rejected before balance mutation; focused tests |
+| M2 arithmetic | CLOSED | Score/resource additions saturate and clamp; boundary tests |
+| M3 material creation | CLOSED HEADLESS | Null `Shader.Find` results no longer reach `new Material`; Unity visual/import behavior unverified |
+
+### Tool and hardware inventory
+
+- Unity editor executable/license: unavailable; `ProjectSettings/ProjectVersion.txt` remains
+  pinned to `6000.3.4f1`.
+- Android SDK: platform `android-36` and build-tools `36.0.0` present under the local SDK;
+  Unity Android Build Support/IL2CPP is not installed.
+- Java: Temurin/JDK 17 available. `adb` is installed, but `adb devices -l` has no target.
+- Apple lane: Windows host; no macOS, Xcode, iOS SDK, signing environment, or iOS device.
+
+M8.8 is complete only at the implementation/evidence tier permitted by these facts. The
+repository is not FULL MVP PRODUCTION-CERTIFIED: editor, generated-project, Android APK/
+device/sensor, iOS build/device, and measured UX/performance tiers remain UNVERIFIED.

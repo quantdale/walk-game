@@ -29,7 +29,10 @@ namespace WalkGame.World
                 marker.transform.localScale = new Vector3(0.55f, 0.9f, 0.14f);
                 _markerRenderer = marker.GetComponent<Renderer>();
                 var shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
-                _markerRenderer.sharedMaterial = new Material(shader) { color = new Color(0.82f, 0.64f, 0.30f) };
+                if (shader != null)
+                {
+                    _markerRenderer.sharedMaterial = new Material(shader) { color = new Color(0.82f, 0.64f, 0.30f) };
+                }
                 var collider = marker.GetComponent<Collider>();
                 if (collider != null)
                 {

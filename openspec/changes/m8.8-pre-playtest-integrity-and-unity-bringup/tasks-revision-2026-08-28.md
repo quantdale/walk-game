@@ -1,6 +1,6 @@
 # M8.8 Tasks Revision — 2026-08-28
 
-Status: ACTIVE
+Status: EXECUTED LOCALLY; FINAL CI/PUBLICATION PENDING
 Baseline: main@95606565c44b7bab04e434856ad9cd65dbefd101
 Purpose: smallest effective sequence after fresh whole-repository re-audit
 Autonomous budget: up to approximately 12 hours of legitimate work
@@ -9,159 +9,168 @@ Carry forward all non-conflicting tasks from tasks.md. This file controls depend
 
 ## Phase 0 — Reconcile and establish truthful baseline
 
-- [ ] Prove repository identity and current remote.
-- [ ] Inspect commits after 95606565 if main advanced.
-- [ ] Use one writer/branch/worktree per AGENTS.md and acquire the writer lease before mutation.
-- [ ] Run fresh domain, verify-domain, Unity-static, release-hygiene, agent-guard, certification-script, and diff gates.
-- [ ] Record every result as VERIFIED PASS, VERIFIED FAIL, UNVERIFIED, or HISTORICAL.
-- [ ] Capture editor/license/build-support, Android SDK/device, and macOS/Xcode/iOS availability.
+- [x] Prove repository identity and current remote.
+- [x] Inspect commits after 95606565 if main advanced.
+- [x] Use one writer/branch/worktree per AGENTS.md and acquire the writer lease before mutation.
+- [x] Run fresh domain, verify-domain, Unity-static, release-hygiene, agent-guard, certification-script, and diff gates.
+- [x] Record every result as VERIFIED PASS, VERIFIED FAIL, UNVERIFIED, or HISTORICAL.
+- [x] Capture editor/license/build-support, Android SDK/device, and macOS/Xcode/iOS availability.
 
 Exit: exact current failures and unavailable prerequisites are recorded.
 
 ## Phase 1 — Fix the currently red CI guard fixture
 
-- [ ] Reproduce S11h using the real pre-push hook.
-- [ ] Demonstrate that the fixture insteadOf rewrite changes git remote get-url origin to file transport and triggers identity rejection.
-- [ ] Repair the fixture or test seam without weakening the production identity guard.
-- [ ] Make hook tests reason-sensitive so S11f/S11g/S11h/S11i prove their intended behavior.
-- [ ] Preserve local-only fixture egress restrictions.
-- [ ] Run all PowerShell, shell, hook, identity, writer-lock, and race scenarios.
-- [ ] Rerun the GitHub Actions-equivalent guard command.
+- [x] Reproduce S11h using the real pre-push hook.
+- [x] Demonstrate that the fixture insteadOf rewrite changes git remote get-url origin to file transport and triggers identity rejection.
+- [x] Repair the fixture or test seam without weakening the production identity guard.
+- [x] Make hook tests reason-sensitive so S11f/S11g/S11h/S11i prove their intended behavior.
+- [x] Preserve local-only fixture egress restrictions.
+- [x] Run all PowerShell, shell, hook, identity, writer-lock, and race scenarios.
+- [x] Rerun the GitHub Actions-equivalent guard command.
 
 Exit: Test-AgentGuards is 100% green locally on supported shell environment and CI is capable of proving the intended hook paths.
 
 ## Phase 2 — Close deterministic source blockers
 
 ### H1 Editor compile namespace
-- [ ] Add valid namespace/qualification for GraphicsSettings.
-- [ ] Add valid namespace/qualification for IPostprocessBuildWithReport.
-- [ ] Do not add reflection/allowlist workarounds.
+- [x] Add valid namespace/qualification for GraphicsSettings.
+- [x] Add valid namespace/qualification for IPostprocessBuildWithReport.
+- [x] Do not add reflection/allowlist workarounds.
 
 ### H2 SaveMigrator
-- [ ] Add current/v0/negative/future/missing-step/no-progress/backward/jump tests.
-- [ ] Define minimum-supported schema.
-- [ ] Make true imply exact Current.
-- [ ] Fail unsupported lower and forward schema.
-- [ ] Prove real load policy preserves incompatible evidence and does not fabricate a new profile.
+- [x] Add current/v0/negative/future/missing-step/no-progress/backward/jump tests.
+- [x] Define minimum-supported schema.
+- [x] Make true imply exact Current.
+- [x] Fail unsupported lower and forward schema.
+- [x] Prove real load policy preserves incompatible evidence and does not fabricate a new profile.
 
 ### H5 Android API 36
-- [ ] Change the deterministic Android build target from API 35 to API 36 or later.
-- [ ] Update static/script assertions and docs that encode 35.
-- [ ] Verify Unity/SDK tooling has platform/build tools required by API 36.
-- [ ] Add regression that the release-shaped build path cannot silently fall back below the required target.
+- [x] Change the deterministic Android build target from API 35 to API 36 or later.
+- [x] Update static/script assertions and docs that encode 35.
+- [x] Verify the local SDK inventory has platform/build tools required by API 36; Unity Android Build Support remains unavailable.
+- [x] Add regression that the release-shaped build path cannot silently fall back below the required target.
 
 ### M1/M2/M3
-- [ ] Reject null/empty successful Vitality spend reason before mutation.
-- [ ] Add boundary-safe resource/score arithmetic.
-- [ ] Add cheap null-safe Shader.Find material guards where unambiguous.
-- [ ] Prove normal Ashfall authored values/visual intent are unchanged.
+- [x] Reject null/empty successful Vitality spend reason before mutation.
+- [x] Add boundary-safe resource/score arithmetic.
+- [x] Add cheap null-safe Shader.Find material guards where unambiguous.
+- [x] Prove normal Ashfall authored values/visual intent are unchanged by headless/static regression coverage; Unity visual inspection remains unverified.
 
-Exit: all engine-free focused tests and full 224+ domain suite pass; source fixes are landed. H1 semantic status remains UNVERIFIED until Unity compile.
+Exit: all engine-free focused tests and the full current domain suite pass; source fixes are landed. H1 semantic status remains UNVERIFIED until Unity compile.
 
 ## Phase 3 — Build semantic Unity evidence and materialize reproducible project state
 
-- [ ] Add fail-closed semantic compile/import wrapper for Unity 6000.3.4f1.
-- [ ] Add false-green fixture tests: wrong version, launch failure, compiler error, stale evidence, missing completion, unexpected mutation.
-- [ ] Bind source SHA, dirty state, editor identity, timestamps and log identity.
-- [ ] If pinned licensed Unity exists, import a disposable clean checkout before setup and capture first-import diff.
-- [ ] Run ApplyProjectSetup and capture project/URP/package changes.
-- [ ] Materialize Packages/packages-lock.json and stable canonical ProjectSettings/URP assets generated by Unity where appropriate.
-- [ ] Do not hand-author opaque generated Unity state.
-- [ ] Run setup a second time and prove idempotence.
-- [ ] Re-run semantic compile from a second clean checkout of resulting source.
-- [ ] Sweep every Unity assembly after the first compiler error.
-- [ ] Run EditMode and PlayMode after semantic compile is green.
+- [x] Add fail-closed semantic compile/import wrapper for Unity 6000.3.4f1.
+- [x] Add false-green fixture tests: wrong version, launch failure, compiler error, stale evidence, missing completion, unexpected mutation.
+- [x] Bind source SHA, dirty state, editor identity, timestamps and log identity.
+- [ ] If pinned licensed Unity exists, import a disposable clean checkout before setup and capture first-import diff. **UNVERIFIED — no Unity editor/license.**
+- [ ] Run ApplyProjectSetup and capture project/URP/package changes. **UNVERIFIED — no Unity editor/license.**
+- [ ] Materialize Packages/packages-lock.json and stable canonical ProjectSettings/URP assets generated by Unity where appropriate. **UNVERIFIED — no Unity editor/license; no opaque assets hand-authored.**
+- [x] Do not hand-author opaque generated Unity state.
+- [ ] Run setup a second time and prove idempotence. **UNVERIFIED — no Unity editor/license.**
+- [ ] Re-run semantic compile from a second clean checkout of resulting source. **UNVERIFIED — no Unity editor/license.**
+- [x] Sweep every Unity assembly after the first compiler error through the fail-closed log/evidence contract; semantic compile execution remains unverified.
+- [ ] Run EditMode and PlayMode after semantic compile is green. **UNVERIFIED — no Unity editor/license.**
 
 Exit: H1/H3 are real semantic VERIFIED PASS when Unity exists; H4 is proven reproducible/idempotent. Otherwise exact Unity prerequisite remains UNVERIFIED and other lanes continue.
 
 ## Phase 4 — Android API 36 build and runtime certification
 
-- [ ] Build IL2CPP ARM64 with target API 36.
-- [ ] Bind source SHA, Unity version, SDK/build tools, targetSdk, artifact hash.
-- [ ] Run selected-target install/startup/background/resume/rotation/force-stop/relaunch smoke.
-- [ ] Run on Android 16 where available.
+- [ ] Build IL2CPP ARM64 with target API 36. **UNVERIFIED — Unity Android Build Support unavailable.**
+- [x] Bind source SHA, Unity version, SDK/build tools, targetSdk, artifact hash in the build wrapper.
+- [ ] Run selected-target install/startup/background/resume/rotation/force-stop/relaunch smoke. **UNVERIFIED — no APK or adb target.**
+- [ ] Run on Android 16 where available. **UNVERIFIED — no target.**
 
 Permission/restart:
-- [ ] fresh install -> undecided;
-- [ ] deny;
-- [ ] force-stop/process death;
-- [ ] relaunch and inspect provider/refined state before new request;
-- [ ] request again and verify bounded/non-stacked prompt behavior;
-- [ ] Settings grant/revoke and relaunch;
-- [ ] add deterministic state-model regressions;
-- [ ] change provider code only if runtime/official behavior demonstrates a defect.
+- [ ] fresh install -> undecided; **UNVERIFIED — no device.**
+- [ ] deny; **UNVERIFIED — no device.**
+- [ ] force-stop/process death; **UNVERIFIED — no device.**
+- [ ] relaunch and inspect provider/refined state before new request; **UNVERIFIED — no device.**
+- [ ] request again and verify bounded/non-stacked prompt behavior; **UNVERIFIED — no device.**
+- [ ] Settings grant/revoke and relaunch; **UNVERIFIED — no device.**
+- [x] add deterministic state-model regressions.
+- [x] change provider code only if runtime/official behavior demonstrates a defect; no unproven runtime change was made.
 
 Physical movement:
-- [ ] verify genuine TYPE_STEP_COUNTER device;
-- [ ] prove no duplicate Vitality across polling, Expedition, save/reload, force-stop/relaunch;
-- [ ] preserve cursor/dedup exactly-once invariants.
+- [ ] verify genuine TYPE_STEP_COUNTER device; **UNVERIFIED — no device.**
+- [ ] prove no duplicate Vitality across polling, Expedition, save/reload, force-stop/relaunch; **UNVERIFIED — no device.**
+- [x] preserve cursor/dedup exactly-once invariants through existing and new headless regressions.
 
 Exit: Android store-shaped build and available device tiers are green, or each absent hardware tier is explicitly UNVERIFIED.
 
 ## Phase 5 — Reproducible iOS build path and provider certification
 
 Locally implementable:
-- [ ] add a Unity iOS Xcode-generation entry point equivalent in rigor to Android build setup;
-- [ ] make iOS bundle identifier/project settings deterministic in canonical project state;
-- [ ] add a macOS-oriented build/cert wrapper with source/tool/output evidence;
-- [ ] add source-level late-query/shutdown/recomposition/provider-generation tests;
-- [ ] make managed callback retention intent explicit where required for IL2CPP/AOT.
+- [x] add a Unity iOS Xcode-generation entry point equivalent in rigor to Android build setup;
+- [x] make iOS bundle identifier/project settings deterministic in canonical project state;
+- [x] add a macOS-oriented build/cert wrapper with source/tool/output evidence;
+- [x] add source-level late-query/shutdown/recomposition/provider-generation tests;
+- [x] make managed callback retention intent explicit where required for IL2CPP/AOT.
 
 On genuine Apple environment:
-- [ ] use Xcode 26 or later and iOS 26 SDK or later;
-- [ ] generate Xcode project from final source;
-- [ ] verify CoreMotion and NSMotionUsageDescription;
-- [ ] build/sign/install;
-- [ ] exercise permission, historical query, live session, background/resume, shutdown/relaunch and late callback ownership;
-- [ ] capture device/tool/build evidence.
+- [ ] use Xcode 26 or later and iOS 26 SDK or later; **UNVERIFIED — Windows host has no Xcode.**
+- [ ] generate Xcode project from final source; **UNVERIFIED — no macOS/Unity editor.**
+- [ ] verify CoreMotion and NSMotionUsageDescription; **UNVERIFIED — source/wrapper checks exist, generated project not available.**
+- [ ] build/sign/install; **UNVERIFIED — no macOS/signing/device.**
+- [ ] exercise permission, historical query, live session, background/resume, shutdown/relaunch and late callback ownership; **UNVERIFIED — no device.**
+- [ ] capture device/tool/build evidence. **UNVERIFIED — no Apple environment.**
 
 Exit: source/build harness exists and source-level tests pass; runtime iOS is green only with real Apple evidence, otherwise UNVERIFIED.
 
 ## Phase 6 — User-facing hardening and measurements
 
 Where devices exist:
-- [ ] complete primary restoration -> builder -> explore -> expedition journeys without developer intervention;
-- [ ] verify safe areas, orientation, touch ergonomics and readable UI;
-- [ ] basic accessibility review;
-- [ ] profile Builder and Explore frame times;
-- [ ] measure region transition;
-- [ ] observe Expedition battery/thermal behavior;
-- [ ] fix only measured material regressions;
-- [ ] add regression coverage for every material defect fixed.
+- [ ] complete primary restoration -> builder -> explore -> expedition journeys without developer intervention; **UNVERIFIED — no Unity/device lane.**
+- [ ] verify safe areas, orientation, touch ergonomics and readable UI; **UNVERIFIED — no device.**
+- [ ] basic accessibility review; **UNVERIFIED — no device/editor.**
+- [ ] profile Builder and Explore frame times; **UNVERIFIED — no device/editor.**
+- [ ] measure region transition; **UNVERIFIED — no device/editor.**
+- [ ] observe Expedition battery/thermal behavior; **UNVERIFIED — no device.**
+- [x] fix only measured material regressions; no unmeasured performance change was introduced.
+- [x] add regression coverage for every material defect fixed in this campaign.
 
 Exit: no P0/P1 user-facing blocker; measured targets/dispositions recorded.
 
 ## Phase 7 — Full regression and release certification
 
-- [ ] domain tests;
-- [ ] verify-domain;
-- [ ] verify-unity-static;
-- [ ] verify-release-hygiene;
-- [ ] Test-AgentGuards 100%;
-- [ ] Test-CertificationScripts;
-- [ ] semantic-wrapper fixtures;
-- [ ] focused migration/ledger/reward/platform state tests;
-- [ ] git diff --check;
-- [ ] semantic Unity compile when editor exists;
-- [ ] EditMode;
-- [ ] PlayMode;
-- [ ] Android API 36 build/smoke/device;
-- [ ] iOS Xcode/build/device when available;
-- [ ] no unexpected dirty/generated state;
-- [ ] no secrets/debug artifacts;
-- [ ] CI green at final SHA.
+- [x] domain tests;
+- [x] verify-domain;
+- [x] verify-unity-static;
+- [x] verify-release-hygiene;
+- [x] Test-AgentGuards 100%;
+- [x] Test-CertificationScripts;
+- [x] semantic-wrapper fixtures;
+- [x] focused migration/ledger/reward/platform state tests;
+- [x] git diff --check;
+- [ ] semantic Unity compile when editor exists; **UNVERIFIED — no Unity editor/license.**
+- [ ] EditMode; **UNVERIFIED — no Unity editor/license.**
+- [ ] PlayMode; **UNVERIFIED — no Unity editor/license.**
+- [ ] Android API 36 build/smoke/device; **UNVERIFIED — no Android Build Support/APK/device.**
+- [ ] iOS Xcode/build/device when available; **UNVERIFIED — no macOS/Xcode/device.**
+- [x] no unexpected dirty/generated state introduced by the scripts; build artifacts are ignored and no opaque project state was hand-authored.
+- [x] no secrets/debug artifacts;
+- [ ] CI green at final SHA. **PENDING FINAL PUBLICATION.**
 
 Update:
-- [ ] OpenSpec evidence and task states;
-- [ ] docs/IMPLEMENTATION_STATUS.md;
-- [ ] docs/TESTING_AND_PERFORMANCE.md;
-- [ ] scripts/README.md;
-- [ ] ADR 0003 or a new ADR if canonical project-state policy materially changes;
-- [ ] mobile/build docs for API 36 and Xcode 26/iOS 26.
+- [x] OpenSpec evidence and task states;
+- [x] docs/IMPLEMENTATION_STATUS.md;
+- [x] docs/TESTING_AND_PERFORMANCE.md;
+- [x] scripts/README.md;
+- [x] ADR 0003 or a new ADR if canonical project-state policy materially changes;
+- [x] mobile/build docs for API 36 and Xcode 26/iOS 26.
 
 Exit:
-- [ ] all locally executable requirements complete;
-- [ ] no known P0/P1 blocker;
-- [ ] external tiers have exact UNVERIFIED blockers if absent;
-- [ ] execution prompt changed to COMPLETE only at truthful completion;
-- [ ] final commit/push performed normally with no force.
+- [x] all locally executable requirements complete;
+- [x] no known P0/P1 deterministic source or process blocker;
+- [x] external tiers have exact UNVERIFIED blockers if absent;
+- [ ] execution prompt changed to COMPLETE only at truthful completion; **PENDING final CI/publication.**
+- [ ] final commit/push performed normally with no force. **PENDING.**
+
+## Executor evidence — 2026-08-28
+
+The reconciled source baseline was `main@15947a222b9812cb641066f40cb8e48a276207c7`.
+Fresh local results are 263/263 domain, 112/112 Unity-static, 63 release-hygiene sources,
+43/43 agent guards, and 71/71 certification-script checks. Unity, Android Build Support /
+APK / device, macOS/Xcode/iOS, and measured UX/performance remain UNVERIFIED for the
+environment reasons recorded in `docs/IMPLEMENTATION_STATUS.md`. Required remote CI and
+normal final publication remain pending until the final worktree is gated and pushed.

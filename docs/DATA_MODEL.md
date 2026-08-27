@@ -352,6 +352,15 @@ a failed write reverts the canonical graph in place to exact disk truth.
 
 Every persisted model change that breaks compatibility must increment `schemaVersion`.
 
+The current implementation defines `SaveSchemaVersions.Current = 1` and
+`SaveSchemaVersions.MinimumSupported = 1`. A current-schema save is accepted unchanged;
+schema `0` or any negative value fails closed as incompatible, and a future schema fails
+closed. If a later release adds migrations, each table entry must migrate exactly one
+version (`vN` to `vN+1`); missing, throwing, non-progressing, backward, or jumping steps
+must fail. `TryMigrateToCurrent` returns success only when the profile ends at the exact
+current schema. Repository load preserves incompatible bytes and does not fabricate a
+replacement profile (see `M88SaveMigratorContractTests`).
+
 Example:
 
 ```text

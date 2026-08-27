@@ -29,14 +29,20 @@ namespace WalkGame.World
                 body.transform.localPosition = new Vector3(0f, 0.9f, 0f);
                 body.transform.localScale = new Vector3(0.65f, 0.9f, 0.65f);
                 var shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
-                body.GetComponent<Renderer>().sharedMaterial = new Material(shader) { color = new Color(0.67f, 0.49f, 0.32f) };
+                if (shader != null)
+                {
+                    body.GetComponent<Renderer>().sharedMaterial = new Material(shader) { color = new Color(0.67f, 0.49f, 0.32f) };
+                }
 
                 var head = GameObject.CreatePrimitive(PrimitiveType.Sphere);
                 head.name = "Head";
                 head.transform.SetParent(transform, false);
                 head.transform.localPosition = new Vector3(0f, 1.95f, 0f);
                 head.transform.localScale = Vector3.one * 0.42f;
-                head.GetComponent<Renderer>().sharedMaterial = new Material(shader) { color = new Color(0.78f, 0.62f, 0.46f) };
+                if (shader != null)
+                {
+                    head.GetComponent<Renderer>().sharedMaterial = new Material(shader) { color = new Color(0.78f, 0.62f, 0.46f) };
+                }
 
                 var collider = body.GetComponent<Collider>();
                 if (collider != null)

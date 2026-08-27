@@ -15,7 +15,11 @@ Anything else stays UNVERIFIED.
 Preconditions:
 
 1. Development APK built from the pinned editor via
-   `scripts/build-android-development.ps1` (`Builds/Android/WalkGame-dev.apk`).
+   `scripts/build-android-development.ps1` (`Builds/Android/WalkGame-dev.apk`). The build
+   evidence must show minSdk 26 and a generated-manifest `targetSdkVersion` of at least
+   API 36; source `PlayerSettings` alone is insufficient. This follows the
+   [Google Play target API requirement](https://developer.android.com/google/play/requirements/target-sdk)
+   effective 2026-08-31.
 2. Exactly one authorized/online adb target is present. `scripts/verify-android-smoke.ps1`
    now binds every adb command to one exact serial via `-DeviceSerial`; with no serial it
    fails closed unless exactly one eligible target is connected.
@@ -50,8 +54,12 @@ without that feature must use the unavailable-provider fallback path instead.
 
 ## iOS checklist
 
-Preconditions: Xcode project generated from the pinned editor on macOS, signed,
-device provisioned. All of the following remain UNVERIFIED until run.
+Preconditions: Xcode project generated from the pinned editor on macOS using Xcode 26 or
+later and the iOS 26 SDK or later, signed, device provisioned. All of the following
+remain UNVERIFIED until run. `scripts/build-ios-xcode.ps1` records the Unity/Xcode/SDK
+versions, generated project hash, bundle identity, CoreMotion privacy entry, and build/
+sign/install outcome. The current App Store toolchain floor is documented by
+[Apple's upcoming requirements](https://developer.apple.com/news/upcoming-requirements/).
 
 | # | Case | Steps | Evidence artifact | Pass criteria |
 | --- | --- | --- | --- | --- |

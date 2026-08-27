@@ -14,15 +14,32 @@ Testing must therefore prioritize:
 
 ## 1A. Current campaign evidence
 
-As of 2026-08-27 (M8.7 canonical-state & certification-integrity closure, ADR 0007 amendment; M8.6 harness preserved), `dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj`
-passes **224/224** (213 baseline + 11 new M8.7 canonical-state regressions in `M87SaveIntegrityClosureTests`) and `scripts/verify-unity-static.ps1` passes the pinned Unity version,
-asset metadata, package invariants, and Bootstrap scene checks (108 assets/108 metas — added `M87SaveIntegrityClosureTests.cs` + meta).
-`scripts/verify-release-hygiene.ps1` adds a CI-runnable privacy/release audit (no GPS/save-path
-logging, Log-wrapper enforcement, minimal manifest). Player-facing state is covered by
-`PlayerExperienceTests`, exactly-once by `ActivityServiceTests` + `InterruptedSessionRecoveryTests`
-(process-death, late deliveries, save/reload), pacing by `AshfallEconomyPacingTests`, and the
-**real application transaction protocol** by `MovementDeliveryDurabilityTests`,
-`ApplicationOrchestrationTests`, and the M8.5 suites:
+As of 2026-08-28 (M8.8 re-audited completion campaign), `dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj`
+passes **263/263** and `scripts/verify-unity-static.ps1` passes **112/112** asset/meta checks.
+The same fresh gate set records `verify-domain.ps1` PASS, release hygiene PASS across 63
+runtime sources, `Test-AgentGuards.ps1` **43/43 PASS**, `Test-CertificationScripts.ps1`
+**71/71 PASS**, and `git diff --check` PASS. The M8.8 additions cover strict save migration
+postconditions, reward/spend overflow and reason-code invariants, Android permission restart
+state transitions, iOS provider lifetime/AOT source contracts, and fail-closed Unity
+compile/import evidence fixtures.
+
+Unity semantic compile/EditMode/PlayMode, Android IL2CPP/API 36 APK and device evidence,
+iOS Xcode/device evidence, and measured performance/UX remain **UNVERIFIED** because this
+host has no licensed Unity editor, Android Build Support, connected Android target, or
+macOS/Xcode environment. The scripts and tests reject missing prerequisites rather than
+turning source/static checks into those higher evidence tiers.
+
+The prior M8.7 narrative below is retained as historical context.
+
+### Historical M8.7 test-family narrative
+
+The continuing test families include: `scripts/verify-release-hygiene.ps1` adds a
+CI-runnable privacy/release audit (no GPS/save-path logging, Log-wrapper enforcement,
+minimal manifest). Player-facing state is covered by `PlayerExperienceTests`, exactly-once
+by `ActivityServiceTests` + `InterruptedSessionRecoveryTests` (process-death, late
+deliveries, save/reload), pacing by `AshfallEconomyPacingTests`, and the **real application
+transaction protocol** by `MovementDeliveryDurabilityTests`, `ApplicationOrchestrationTests`,
+and the M8.5 suites:
 
 - `OperationOwnershipTests` — timeout/completion races have exactly one terminal owner;
   abandoned preparations/stops converge provider state without stranding claims or losing retryability.

@@ -2,8 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using UnityEditor;
+using UnityEditor.Build;
 using UnityEditor.Build.Reporting;
 using UnityEngine;
+using UnityEngine.Rendering;
 using WalkGame.Content;
 
 namespace WalkGame.EditorTools
@@ -15,6 +17,10 @@ namespace WalkGame.EditorTools
     /// </summary>
     public static class WalkGameEditorTools
     {
+        public const string AndroidPackageIdentifier = "com.quantdale.walkgame";
+        public const string IosBundleIdentifier = "com.quantdale.walkgame";
+        public const string IosMinimumDeploymentTarget = "16.0";
+
         [MenuItem("WalkGame/Validate Content IDs")]
         public static void ValidateContent()
         {
@@ -170,10 +176,12 @@ namespace WalkGame.EditorTools
         {
             PlayerSettings.companyName = "Walk Game";
             PlayerSettings.productName = "Walk Game";
-            PlayerSettings.SetApplicationIdentifier(BuildTargetGroup.Android, "com.quantdale.walkgame");
+            PlayerSettings.SetApplicationIdentifier(BuildTargetGroup.Android, AndroidPackageIdentifier);
+            PlayerSettings.SetApplicationIdentifier(BuildTargetGroup.iOS, IosBundleIdentifier);
             PlayerSettings.Android.minimumSdkVersion = AndroidSdkVersions.AndroidApiLevel26;
             PlayerSettings.iOS.appleDeveloperTeamID = string.Empty; // filled by the developer
-            Debug.Log("[Setup] Product identity applied (Android package com.quantdale.walkgame).");
+            PlayerSettings.iOS.targetOSVersionString = IosMinimumDeploymentTarget;
+            Debug.Log($"[Setup] Product identity applied (Android package {AndroidPackageIdentifier}, iOS bundle {IosBundleIdentifier}, iOS minimum {IosMinimumDeploymentTarget}).");
         }
 
         /// <summary>
@@ -211,13 +219,13 @@ namespace WalkGame.EditorTools
                 throw new InvalidOperationException("No enabled build scenes are configured.");
             }
 
-            const string packageIdentifier = "com.quantdale.walkgame";
+            const string packageIdentifier = AndroidPackageIdentifier;
             const string outputPath = "Builds/Android/WalkGame-dev.apk";
             Directory.CreateDirectory(Path.GetDirectoryName(outputPath));
 
             PlayerSettings.SetApplicationIdentifier(BuildTargetGroup.Android, packageIdentifier);
             PlayerSettings.Android.minimumSdkVersion = AndroidSdkVersions.AndroidApiLevel26;
-            PlayerSettings.Android.targetSdkVersion = AndroidSdkVersions.AndroidApiLevel35;
+            PlayerSettings.Android.targetSdkVersion = AndroidSdkVersions.AndroidApiLevel36;
             PlayerSettings.Android.targetArchitectures = AndroidArchitecture.ARM64;
 
             // Certify the release-shaped backend, not just the fast iteration one:
@@ -250,6 +258,70 @@ namespace WalkGame.EditorTools
             }
 
             Debug.Log($"[Build] Android development APK created: {Path.GetFullPath(outputPath)} ({report.summary.totalSize} bytes).");
+        }
+
+        [MenuItem("WalkGame/Build/iOS Xcode Development")]
+        public static void BuildIosXcodeDevelopment()
+        {
+            ApplyProjectSetup();
+
+            if (!BuildPipeline.IsBuildTargetSupported(BuildTargetGroup.iOS, BuildTarget.iOS))
+            {
+                throw new InvalidOperationException("iOS Build Support is not installed for this Unity editor.");
+            }
+
+            var enabledScenes = new List<string>();
+            foreach (var scene in EditorBuildSettings.scenes)
+            {
+                if (!scene.enabled)
+                {
+                    continue;
+                }
+
+                if (!File.Exists(scene.path))
+                {
+                    throw new InvalidOperationException($"Enabled build scene is missing: {scene.path}");
+                }
+
+                enabledScenes.Add(scene.path);
+            }
+
+            if (enabledScenes.Count == 0)
+            {
+                throw new InvalidOperationException("No enabled build scenes are configured.");
+            }
+
+            const string outputPath = "Builds/iOS/WalkGame-Xcode";
+            Directory.CreateDirectory(Path.GetDirectoryName(outputPath));
+            PlayerSettings.SetApplicationIdentifier(BuildTargetGroup.iOS, IosBundleIdentifier);
+            PlayerSettings.iOS.targetOSVersionString = IosMinimumDeploymentTarget;
+            PlayerSettings.SetScriptingBackend(BuildTargetGroup.iOS, ScriptingImplementation.IL2CPP);
+            PlayerSettings.iOS.appleDeveloperTeamID = string.Empty; // signing is supplied outside Git on macOS
+
+            EditorUserBuildSettings.development = true;
+            EditorUserBuildSettings.allowDebugging = true;
+            EditorUserBuildSettings.connectProfiler = false;
+
+            if (!EditorUserBuildSettings.SwitchActiveBuildTarget(BuildTargetGroup.iOS, BuildTarget.iOS))
+            {
+                throw new InvalidOperationException("Could not switch the active build target to iOS.");
+            }
+
+            var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
+            {
+                scenes = enabledScenes.ToArray(),
+                locationPathName = outputPath,
+                target = BuildTarget.iOS,
+                options = BuildOptions.Development | BuildOptions.AllowDebugging,
+            });
+
+            if (report.summary.result != BuildResult.Succeeded || !Directory.Exists(outputPath))
+            {
+                throw new InvalidOperationException(
+                    $"iOS Xcode generation failed: {report.summary.result}, errors={report.summary.totalErrors}.");
+            }
+
+            Debug.Log($"[Build] iOS Xcode project created: {Path.GetFullPath(outputPath)} ({report.summary.totalSize} bytes).");
         }
     }
 

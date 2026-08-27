@@ -264,3 +264,220 @@ function Get-FileSha256 {
     $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash
     return $hash.ToLowerInvariant()
 }
+
+# Semantic compile/import log validation (M8.8 H3). A Unity process exit code is
+# not sufficient: a stale/partial log or a compiler error must never become a
+# green certification result.
+function Test-UnityCompileLog {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [ref]$Summary
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        if ($Summary) { $Summary.Value = 'compile log missing' }
+        return $false
+    }
+
+    try { $content = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop }
+    catch {
+        if ($Summary) { $Summary.Value = 'compile log unreadable' }
+        return $false
+    }
+
+    if ([string]::IsNullOrWhiteSpace($content)) {
+        if ($Summary) { $Summary.Value = 'compile log empty' }
+        return $false
+    }
+
+    $errorPatterns = @(
+        'error CS\d+',
+        '(?i)\bcompiler error\b',
+        '(?i)\bfailed to compile\b',
+        '(?i)\bcompilation failed\b',
+        '(?i)\bscript compilation failed\b',
+        '(?i)\bunhandled exception\b',
+        '(?i)\bimport(?:ing)? .* failed\b'
+    )
+    foreach ($pattern in $errorPatterns) {
+        if ($content -match $pattern) {
+            if ($Summary) { $Summary.Value = "compiler/import error detected ($pattern)" }
+            return $false
+        }
+    }
+
+    # ValidateContent is the semantic completion method used by the wrapper.
+    # Keep fixture compatibility with the explicit completion markers used by
+    # Unity logs, while requiring a marker that proves the requested operation
+    # completed rather than merely that Unity launched.
+    $completionPatterns = @(
+        '(?i)\[Validate\].*Ashfall Basin OK',
+        '(?i)WalkGame.*Validate.*OK',
+        '(?i)Compilation succeeded',
+        '(?i)Exiting batchmode.*success',
+        '(?i)import.*complete'
+    )
+    foreach ($pattern in $completionPatterns) {
+        if ($content -match $pattern) {
+            if ($Summary) { $Summary.Value = 'compile log clean with completion marker' }
+            return $true
+        }
+    }
+
+    if ($Summary) { $Summary.Value = 'compile log missing semantic completion marker' }
+    return $false
+}
+
+# Validate machine-readable semantic compile evidence. The wrapper writes this
+# record only after its fresh run; callers still validate every binding before
+# accepting it. This helper is intentionally engine-free for false-green tests.
+function Test-UnityCompileEvidence {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$EvidencePath,
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedSha,
+        [Parameter(Mandatory = $true)]
+        [string]$LogPath,
+        [string]$ExpectedPinnedVersion = '',
+        [switch]$AllowMutation,
+        [ref]$Summary
+    )
+
+    if (-not (Test-Path -LiteralPath $EvidencePath)) {
+        if ($Summary) { $Summary.Value = 'compile evidence missing' }
+        return $false
+    }
+
+    try {
+        $evidence = Get-Content -LiteralPath $EvidencePath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        if ($Summary) { $Summary.Value = 'compile evidence unreadable/malformed' }
+        return $false
+    }
+
+    foreach ($field in @('sourceSha', 'preDirty', 'postDirty', 'startUtc', 'endUtc', 'editorPath', 'pinnedVersion', 'exitCode', 'logPath', 'logFresh', 'compilerErrorCount', 'semanticComplete')) {
+        if ($null -eq $evidence.$field -or [string]::IsNullOrWhiteSpace([string]$evidence.$field)) {
+            if ($Summary) { $Summary.Value = "evidence missing '$field'" }
+            return $false
+        }
+    }
+
+    if ($evidence.sourceSha -ne $ExpectedSha) {
+        if ($Summary) { $Summary.Value = "evidence sourceSha mismatch (expected $ExpectedSha, got $($evidence.sourceSha))" }
+        return $false
+    }
+    if ($ExpectedPinnedVersion -and $evidence.pinnedVersion -ne $ExpectedPinnedVersion) {
+        if ($Summary) { $Summary.Value = "evidence pinned version mismatch (expected $ExpectedPinnedVersion, got $($evidence.pinnedVersion))" }
+        return $false
+    }
+    if (-not (Test-Path -LiteralPath $LogPath)) {
+        if ($Summary) { $Summary.Value = 'referenced compile log missing' }
+        return $false
+    }
+    $expectedLog = [IO.Path]::GetFullPath($LogPath)
+    $recordedLog = [IO.Path]::GetFullPath([string]$evidence.logPath)
+    if ($recordedLog -ne $expectedLog) {
+        if ($Summary) { $Summary.Value = "evidence logPath mismatch (expected $expectedLog, got $recordedLog)" }
+        return $false
+    }
+
+    try {
+        $start = [DateTimeOffset]::Parse([string]$evidence.startUtc)
+        $end = [DateTimeOffset]::Parse([string]$evidence.endUtc)
+        if ($end -lt $start) {
+            if ($Summary) { $Summary.Value = 'evidence end before start' }
+            return $false
+        }
+        if (([DateTimeOffset]::UtcNow - $end).TotalHours -gt 24) {
+            if ($Summary) { $Summary.Value = 'evidence stale (>24h)' }
+            return $false
+        }
+    }
+    catch {
+        if ($Summary) { $Summary.Value = 'evidence timestamp parse failed' }
+        return $false
+    }
+
+    if ([int]$evidence.exitCode -ne 0) {
+        if ($Summary) { $Summary.Value = "Unity exit $($evidence.exitCode)" }
+        return $false
+    }
+    if ([int]$evidence.compilerErrorCount -ne 0) {
+        if ($Summary) { $Summary.Value = "compilerErrorCount $($evidence.compilerErrorCount) non-zero" }
+        return $false
+    }
+    if (-not [bool]$evidence.logFresh) {
+        if ($Summary) { $Summary.Value = 'compile log is not fresh for this evidence record' }
+        return $false
+    }
+    if ($null -eq $evidence.semanticComplete -or -not [bool]$evidence.semanticComplete) {
+        if ($Summary) { $Summary.Value = 'evidence does not prove semantic completion' }
+        return $false
+    }
+
+    $mutations = @($evidence.mutatedFiles)
+    $unexpectedMutations = @($evidence.unexpectedMutationFiles)
+    if ($unexpectedMutations.Count -gt 0) {
+        if ($Summary) { $Summary.Value = "unexpected mutation recorded ($($unexpectedMutations.Count) file(s))" }
+        return $false
+    }
+    if ($mutations.Count -gt 0 -and -not $AllowMutation) {
+        if ($Summary) { $Summary.Value = "unexpected mutation recorded ($($mutations.Count) file(s))" }
+        return $false
+    }
+
+    $logSummary = ''
+    if (-not (Test-UnityCompileLog -Path $LogPath -Summary ([ref]$logSummary))) {
+        if ($Summary) { $Summary.Value = "log check failed: $logSummary" }
+        return $false
+    }
+    if ($Summary) { $Summary.Value = 'compile evidence valid' }
+    return $true
+}
+
+# Only Unity-generated canonical project material may be explicitly accepted as
+# a mutation during first import/setup. Runtime/source edits and unexplained
+# files remain unexpected even when -AllowMutation is supplied.
+function Get-UnityCanonicalMutationPaths {
+    return @(
+        'Packages/packages-lock.json',
+        'ProjectSettings/ProjectSettings.asset',
+        'Assets/Settings/URP-HighFidelity.asset',
+        'Assets/Settings/URP-HighFidelity.asset.meta'
+    )
+}
+
+function Test-UnityMutationSet {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$MutatedFiles,
+        [switch]$AllowCanonical
+    )
+
+    $canonical = @(Get-UnityCanonicalMutationPaths)
+    $unexpected = @()
+    $acceptedCanonical = @()
+    foreach ($statusLine in $MutatedFiles) {
+        $line = ([string]$statusLine).TrimEnd()
+        $path = if ($line.Length -gt 3) { $line.Substring(3).Trim() } else { $line.Trim() }
+        $path = $path -replace '\\', '/'
+        $isCanonical = $canonical -contains $path
+        if ($isCanonical -and $AllowCanonical) {
+            $acceptedCanonical += $statusLine
+        }
+        else {
+            $unexpected += $statusLine
+        }
+    }
+    return [PSCustomObject]@{
+        All = @($MutatedFiles)
+        Unexpected = $unexpected
+        Canonical = $acceptedCanonical
+    }
+}

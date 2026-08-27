@@ -2,7 +2,7 @@
 # Lost-update protection for quantdale/walk-game (POSIX sh twin of
 # scripts/Check-RemoteAdvance.ps1).
 #
-# Fetches the target branch from origin and proves the remote has NOT gained
+# Fetches the target branch from the origin push transport and proves the remote has NOT gained
 # commits unreachable from local HEAD since session start. Detects the race and
 # STOPS; reconciliation is always deliberate. Never mutates the remote.
 #
@@ -27,7 +27,9 @@ echo "fetching origin/$BRANCH for race check..."
 # M8.7 H5: an absent new branch must be positively distinguished from a
 # transport/auth failure. Query the exact ref first; only a confirmed absence
 # means "new branch", while a failed query fails closed.
-PROBE=$(git ls-remote --heads origin "refs/heads/$BRANCH" 2>/dev/null)
+REMOTE_URL=$(git remote get-url --push origin 2>/dev/null) || fail_env "could not determine origin push transport"
+[ -n "$REMOTE_URL" ] || fail_env "origin has no usable push transport"
+PROBE=$(git ls-remote --heads "$REMOTE_URL" "refs/heads/$BRANCH" 2>/dev/null)
 if [ $? -ne 0 ]; then
     fail_env "could not query origin for '$BRANCH' (transport/auth)"
 fi
@@ -37,7 +39,7 @@ if [ -z "$PROBE" ]; then
     exit 0
 fi
 
-git fetch --quiet origin "$BRANCH" 2>&1 || fail_env "could not fetch '$BRANCH' from origin"
+git fetch --quiet "$REMOTE_URL" "$BRANCH" 2>&1 || fail_env "could not fetch '$BRANCH' from origin"
 
 REMOTE=$(git rev-parse -q --verify FETCH_HEAD 2>/dev/null)
 if [ -z "$REMOTE" ]; then
