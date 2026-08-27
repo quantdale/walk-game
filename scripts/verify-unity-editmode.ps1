@@ -10,9 +10,17 @@
 # TestResults/editmode-results.xml plus the full editor log beside it.
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'cert-script-helpers.ps1')
 
 if (-not $env:UNITY_EDITOR_PATH) {
     Write-Error "UNITY_EDITOR_PATH is not set. Point it at the Unity 6000.3.4f1 editor executable."
+}
+# R4: fail-closed toolchain identity preflight before any editor launch.
+$unityPin = Get-UnityPinnedVersion
+$unityMismatch = Test-UnityEditorMatchesPin -EditorPath $env:UNITY_EDITOR_PATH -PinnedVersion $unityPin
+if ($unityMismatch) {
+    Write-Error "Unity toolchain identity check FAILED: $unityMismatch"
+    exit 1
 }
 
 $resultsDir = Join-Path $repoRoot "TestResults"
@@ -41,8 +49,17 @@ if (Test-Path $logFile) {
     Get-Content $logFile -Tail 40
 }
 if ($unityExit -ne 0) {
-    Write-Host "Unity EditMode run FAILED (exit $unityExit). See $logFile"
-} else {
-    Write-Host "Unity EditMode run passed. Results: $resultsFile"
+    Write-Error "Unity EditMode run FAILED (exit $unityExit). See $logFile"
+    exit $unityExit
 }
-exit $unityExit
+if (-not (Test-Path -LiteralPath $resultsFile)) {
+    Write-Error "Unity EditMode exited 0 but produced no result file: $resultsFile"
+    exit 1
+}
+$resultSummary = ''
+if (-not (Test-NUnitResultXml -Path $resultsFile -Summary ([ref]$resultSummary))) {
+    Write-Error "Unity EditMode result invalid or has failures ($resultSummary): $resultsFile"
+    exit 1
+}
+Write-Host "Unity EditMode PASSED ($resultSummary). Results: $resultsFile Log: $logFile"
+exit 0

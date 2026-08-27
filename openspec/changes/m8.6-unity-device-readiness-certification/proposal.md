@@ -1,6 +1,6 @@
 # M8.6 Proposal — Unity First-Import & Device Readiness Certification
 
-**Status:** PROPOSED  
+**Status:** COMPLETE — in-repo certification-harness lanes executed; EDITOR/DEVICE/iOS lanes UNVERIFIED by environment blocker
 **Depends on:** completed M8.5 Runtime Ownership & Rollback Fidelity / ADR 0011  
 **Target:** M8 — Device Ready
 

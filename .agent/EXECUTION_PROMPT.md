@@ -1,6 +1,6 @@
 # Execution Prompt — M8.6 Unity First-Import & Device Readiness Certification
 
-**Status:** ACTIVE  
+**Status:** COMPLETE
 **Planned-From:** `main@3bbdbcca11fb20a6680dbb96e808b9df2cca31f3`  
 **Planner staging branch:** `agent/walk-game/m8.6-planner-20260826`  
 **Canonical OpenSpec change:** `openspec/changes/m8.6-unity-device-readiness-certification/`  
@@ -312,3 +312,92 @@ Within the existing 12-hour budget, front-load **evidence-harness integrity** im
 
 Do not burn time merely to reach 12 wall-clock hours. The instruction is to permit and organize a long autonomous campaign, not to fabricate work. Continue while legitimate M8.6 work remains; finish early if every executable requirement is genuinely complete, or leave an exact continuation point if the budget ends first.
 
+---
+
+## Executor Report — M8.6 COMPLETE (in-repo lanes; editor/device lanes UNVERIFIED)
+
+**Campaign branch:** `agent/walk-game/m8.6-exec-20260826`
+**Start SHA (prior exec):** `d48c692ccc745947357fd97850f52fa5f2511215`
+**Reconciled onto:** `e78ba78f24e77e7566b9ed3259878f6af83d24b5` (`origin/main`, the 288-file deep re-audit hardening that added mandatory R1-R9 / E1-E10 findings).
+**Final SHA:** see commit `feat(cert): M8.6 re-audit hardening — R4/R6/R7/R17.2.10 fail-closed evidence` (this session).
+**Lease:** `sess-20260826T234929Z-1745-771426137` on Windows host, acquired before first mutation.
+
+### Environment inventory (this session)
+- OS/shell: Windows 11 / PowerShell 7.
+- .NET SDK: 9.0.300.
+- Unity Hub: present; **Unity `6000.3.4f1` editor NOT installed** (`C:\Program Files\Unity\Hub\Editor` absent).
+- Unity license/entitlement: **ABSENT** (no `Unity_lic.ulf`; licensing client shows no valid entitlement).
+- Android Build Support (`AndroidPlayer`): **ABSENT** (editor not installed).
+- JDK 17.0.20; Android SDK/NDK at `ANDROID_HOME`/`ANDROID_SDK_ROOT`; `adb` on PATH.
+- Physical Android device: **NONE connected** (`adb devices` empty).
+- macOS/Xcode/signing: **ABSENT**.
+
+### Continuation work — re-audit mandatory findings (locally executable)
+
+The branch was rebased onto `e78ba78`; the re-audit's R1-R9 / E1-E10 findings were dispositioned. The
+editor/device-only findings remain UNVERIFIED (no licensed editor / Build Support / physical device);
+the script-level, engine-free findings were fixed and locked by new regression tests:
+
+1. **R4 toolchain identity preflight** — new `Get-UnityPinnedVersion` / `Test-UnityEditorMatchesPin` in
+   `cert-script-helpers.ps1`; wired into `verify-unity-editmode.ps1` and `verify-unity-playmode.ps1` so a
+   wrong/unpinned editor fails closed before any launch (runtime enforcement still UNVERIFIED: no editor).
+2. **R5 every adb call serial-bound** — audited and confirmed all direct calls (`pidof`, `logcat`, `am`,
+   `pm`, `settings`, `input`) route through the serial-bound `Invoke-Adb`. Required by re-audit; already present.
+3. **R6 idempotent clean-install uninstall** — new `Uninstall-AndroidPackageIdempotent` (absent package =
+   clean success; still-installed removal failure = real failure). Used for both pre-install and final
+   cleanup in `verify-android-smoke.ps1`.
+4. **R7 try/finally summary discipline** — `verify-android-smoke.ps1` restructured so the summary JSON and
+   logcat are written in a `finally` block after the optional uninstall, recording `finalDisposition`.
+5. **R17.2.10 foreground/resumed launch evidence** — new `Get-AndroidForegroundActivity`; smoke now fails
+   if the expected package is not the foreground/resumed activity, not merely process-alive.
+6. **F2/T2/F3/F3.4 (prior session)** — EditMode/PlayMode fail-closed XML validation, serial-bound smoke,
+   and the engine-free `Test-CertificationScripts.ps1` suite (extended 16 -> **35/35 PASS** this session).
+
+The planner-predicted `WalkGameEditorTools.cs` edit-time namespace references (F1/R1) could not be
+reproduced or fixed: doing so requires a licensed Unity editor, so they remain **predicted findings**,
+honestly uncertified (not claimed fixed).
+
+### Fresh gate evidence (this session, final source state)
+
+- Repository identity: `scripts/assert-repo-identity.sh` (and `Assert-RepoIdentity.ps1`) exit 0.
+- Standalone suite: **213/213 PASS** (`dotnet test verification/WalkGame.Domain.Tests/...`).
+- `verify-domain.ps1`: PASS (same suite + restore check).
+- `verify-unity-static.ps1`: PASS (107 assets / 107 metas, Unity 6000.3.4f1 pin).
+- `verify-release-hygiene.ps1`: PASS (63 runtime sources, manifest minimal).
+- `Test-AgentGuards.ps1`: **36/36 PASS** (ps + sh + hook tiers).
+- `scripts/Test-CertificationScripts.ps1`: **35/35 PASS** (R4/R6/R7/R17.2.10 + parse-only checks).
+- `git diff --check`: clean (CRLF normalization only).
+- Unity import/compile, EditMode run, PlayMode run, Android build, lifecycle smoke run, physical step
+  sensor, UX, performance, iOS: **NOT EXECUTED — UNVERIFIED** (no licensed editor / Build Support /
+  physical device / macOS). No false-green conditions remain in any certification wrapper.
+
+### Documentation / OpenSpec changes
+- `openspec/changes/m8.6-unity-device-readiness-certification/tasks.md`: section 17 re-audit checklist
+  marked with DONE/UNVERIFIED dispositions; new `### 17.7 R1-R9 disposition` table; executor-evidence
+  footer updated to final continuation state (35/35 cert tests, rebase onto `e78ba78`).
+- `.agent/EXECUTION_PROMPT.md`: this report, updated to final continuation state.
+- `docs/IMPLEMENTATION_STATUS.md`: M8.6 campaign section updated with engine-free evidence tiers.
+- `docs/TESTING_AND_PERFORMANCE.md`: §1A records M8.6 harness hardening + 35/35 cert-script tests.
+- `docs/DEVICE_CERTIFICATION_CHECKLISTS.md`: preconditions/recording extended with serial / APK SHA-256 /
+  source SHA / lifecycle-only / finalDisposition fields.
+- Hardened scripts: `cert-script-helpers.ps1`, `verify-android-smoke.ps1`, `verify-unity-editmode.ps1`,
+  `verify-unity-playmode.ps1`; new regression suite `Test-CertificationScripts.ps1` (35/35).
+- No ADR required: this is evidence-policy/script-hardening work, not a material architecture change.
+
+### Remaining blockers / follow-ups
+- All EDITOR/DEVICE/iOS gates blocked solely by missing environment (licensed editor, Build Support,
+  physical device, macOS). No repository defect is open. R4/R6/R7/R17.2.10 harness code is in place and
+  engine-free tested, but its runtime enforcement is UNVERIFIED pending the same environment.
+- **Push status (BLOCKED by fail-closed guard, not force-pushed):** the implementation branch
+  `agent/walk-game/m8.6-exec-20260826` has no remote counterpart (only
+  `agent/walk-game/m8.6-planner-20260826` exists on origin). The pre-push race guard
+  (`.githooks/pre-push`, policy layer 1) runs `git fetch origin refs/heads/<branch>` to prove there are
+  no unreachable remote commits; for a never-pushed branch that fetch fails with
+  `fatal: couldn't find remote ref`, and the guard refuses the push rather than assume safety. Per
+  AGENTS.md ("Never force-push", "Preserve stricter local rules") the branch was **not** force-pushed and
+  the hook was **not** bypassed. Recommended resolution: a human creates the remote branch (e.g. push
+  from a trusted session, or the hook is adjusted to treat an absent remote ref as a safe first-push),
+  after which this committed work (`0d5b188`) flows without rebase.
+- Recommended next campaign: **M8 Device Ready / M9 Closed Playtest Readiness** on a host with a
+  licensed Unity 6000.3.4f1 editor and, ideally, a physical step-counter Android device. A measured
+  exactly-once or performance defect surfaced only under real hardware should drive a focused follow-up.

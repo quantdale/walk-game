@@ -16,8 +16,13 @@ Preconditions:
 
 1. Development APK built from the pinned editor via
    `scripts/build-android-development.ps1` (`Builds/Android/WalkGame-dev.apk`).
-2. `adb devices` shows exactly the device under test (no emulator attached).
-3. `scripts/verify-android-smoke.ps1` has passed on this same APK.
+2. Exactly one authorized/online adb target is present. `scripts/verify-android-smoke.ps1`
+   now binds every adb command to one exact serial via `-DeviceSerial`; with no serial it
+   fails closed unless exactly one eligible target is connected.
+3. `scripts/verify-android-smoke.ps1` has passed on this same APK, recording the selected
+   serial, manufacturer/model, Android release/SDK, ABI, step-counter availability,
+   APK SHA-256 and source SHA.
+4. Emulator/no-step-counter targets are labeled `lifecycle-only` and cannot satisfy A5–A13.
 
 | # | Case | Steps | Evidence artifact | Pass criteria |
 | --- | --- | --- | --- | --- |
@@ -65,7 +70,14 @@ device provisioned. All of the following remain UNVERIFIED until run.
 For each executed case append to the campaign notes:
 
 ```text
-<case-id> | <date> | <device model> | <os> | <build sha> | PASS/FAIL | <artifact path>
+<case-id> | <date> | <device model> | <os> | <serial> | <build sha> | <apk sha256> | <source sha> | <lifecycle-only?> | <final-disposition> | <foreground-activity?> | PASS/FAIL | <artifact path>
 ```
+
+`build sha` is the development-build identifier; `apk sha256` and `source sha` are captured
+by `scripts/verify-android-smoke.ps1`. `lifecycle-only` is `yes` for emulator/no-step-counter
+runs that cannot satisfy physical movement cases (A5–A13). The persisted `summary.json` now also
+records `finalDisposition` (uninstalled / kept-installed / failed) and `foregroundActivity` /
+`foregroundState`, so the truthful end state (including cleanup and whether the expected package
+was actually foreground/resumed) is always written even on failure (R7 / R17.2.10).
 
 A FAIL on any exactly-once case (A5–A10, I4–I7) blocks the release gate.
