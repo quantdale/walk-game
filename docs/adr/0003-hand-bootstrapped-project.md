@@ -38,3 +38,7 @@ The project structure was authored by hand:
 - Scene YAML is minimal and may be normalized by Unity's serializer on first save; that
   is expected and harmless.
 - Any future engine pin change must be recorded here and in ProjectVersion.txt.
+
+## M8.8 amendment — deterministic import & first-import provenance
+
+M8.8 clarified that the hand-bootstrap still intentionally leaves `Assets/Settings/URP-HighFidelity.asset` un-tracked until a licensed Unity `6000.3.4f1` editor can generate it deterministically. `WalkGameEditorTools.ConfigureUrp` is idempotent (loads existing asset else creates with mobile-first defaults and assigns `GraphicsSettings.defaultRenderPipeline`/`QualitySettings.renderPipeline`). `scripts/verify-unity-compile.ps1` now proves semantic compilation, rejects stale/compiler-error evidence, and reports `mutatedFiles`/`postDirty` so the first editor import's diff is captured and bound to build provenance. The preferred next step on a licensed host is to run the compile gate, capture the `URP-HighFidelity.asset` diff, classify it as canonical trackable state, prove second-run idempotence, and commit the stable asset so clean checkouts become byte-identical to the certified build. Until that host exists, no opaque `.asset` is hand-fabricated; the tier remains **UNVERIFIED** with the exact blocker.

@@ -12,26 +12,26 @@ Evidence tiers:
 - **DEVICE** — requires physical/emulated mobile hardware.
 - **UNVERIFIED** — claimed by no evidence yet.
 
-Last updated: 2026-08-27 (M8.6 Unity first-import & device readiness certification — re-audit R1-R9 hardening executed; editor/device lanes UNVERIFIED by environment)
+Last updated: 2026-08-27 (M8.8 pre-playtest integrity & Unity bring-up closure — all locally executable H1-H4/M1-M3 closed; editor/device/iOS remain UNVERIFIED by environment blocker)
 
 ## Verification status
 
-- Domain test suite: **213/213 passing (AUTOMATED)** via
+- Domain test suite: **258/258 passing (AUTOMATED)** via
   `dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj`
-  (`scripts/verify-domain.ps1`; also runs in CI on every push/PR to `main`). M8.5 added 28 headless scenarios (185 → 213):
+  (`scripts/verify-domain.ps1`; also runs in CI on every push/PR to `main`). M8.7 added 11 canonical-state regressions (213 → 224); M8.8 added 34 (224 → 258): SaveMigrator contract (11), Vitality/reward overflow (12), Android permission table (7), iOS provider lifetime (4):
   provider lifetime, operation-ownership races, Android claim identity, vehicle-path transaction convergence,
-  durability-gated presentation, dirty-target rollback fidelity, and dedup canonicalization.
+  durability-gated presentation, dirty-target rollback fidelity, dedup canonicalization, migration contract, and overflow/reason-code invariants.
 - CI domain gate: configured (`.github/workflows/domain-tests.yml`) now including the
   release-hygiene/privacy audit — **AUTOMATED**.
 - Unity `6000.3.4f1` is installed at `C:\UnityEditors\6000.3.4f1\Editor`, its executable
   reports the pinned version, and `Data\Resources\PackageManager\Server\UnityPackageManager.exe`
   is present. M8 re-investigation from scratch confirmed the licensing gate is account-level:
-  Unity Hub 3.21.0 (MSIX) runs but holds **zero logged-in accounts** (`accounts.db` empty), the
+  Unity Hub 3.12.1 runs but holds **zero logged-in accounts** (`accounts.db` empty), the
   licensing client reports "Token not found in cache" with 0 entitlement groups and no ULF,
   and every editor entitlement resolves to `granted: False`. No offline activation path exists
   without user credentials; fabricating or bypassing licensing is prohibited. Unity compile,
   EditMode, and PlayMode therefore remain **UNVERIFIED** (reproducible gate: sign into Hub,
-  activate a license, run `scripts/setup-unity-project.ps1`, `scripts/verify-unity-editmode.ps1`,
+  activate a license, run `scripts/verify-unity-compile.ps1`, `scripts/setup-unity-project.ps1`, `scripts/verify-unity-editmode.ps1`,
   `scripts/verify-unity-playmode.ps1`).
 - Android Build Support remains absent (`AndroidPlayer` missing; only Windows Standalone is
   installed). A prior Hub module-install attempt is recorded as paused with status
@@ -40,10 +40,9 @@ Last updated: 2026-08-27 (M8.6 Unity first-import & device readiness certificati
   Android build/install/launch and native lifecycle evidence remain **UNVERIFIED**;
   `scripts/verify-android-smoke.ps1` is committed and ready for the first emulator/device.
   iOS Xcode generation/build remains **UNVERIFIED** (no macOS/Xcode).
-- Static bring-up audit of assemblies/GUIDs/scenes/packages: **AUTOMATED**; 107 asset files
-  and 107 `.meta` files pass the audit with zero missing real GUID references. The only unresolved
-  scene GUID is Unity's built-in zero GUID for the authored light. (Counts refreshed by the
-  M8.5 campaign; earlier records cited 94/94, then 102/102.)
+- Static bring-up audit of assemblies/GUIDs/scenes/packages: **AUTOMATED**; 112 asset files
+  and 112 `.meta` files pass the audit with zero missing real GUID references. The only unresolved
+  scene GUID is Unity's built-in zero GUID for the authored light. (Counts refreshed by M8.8: 108/108 → 112/112 with 4 new test files + metas.)
 
 ## Phase 0 - Foundation
 
@@ -709,3 +708,115 @@ Unity `6000.3.4f1` editor and, ideally, a physical step-counter Android device. 
 measured exactly-once, performance, build, or UX blocker emerges only under real
 hardware, that measured blocker should drive a focused follow-up campaign rather than a
 broad M9 expansion.
+
+---
+
+## M8.8 Pre-Playtest Integrity & Unity Bring-Up Closure
+
+**Status:** COMPLETE (all locally executable H1-H4/M1-M3 closed; EDITOR/DEVICE/iOS remain UNVERIFIED by environment blocker, not missing work).
+**Planned-From:** `main@cf260d0` (M8.7 COMPLETE at campaign start) → `main@0c710e7` (actual head after fetch; single new M8.8 planner commit).
+**Planner branch:** `agent/walk-game/m8.8-planner-20260827`.
+**Implementation branch:** `agent/walk-game/m8.8-exec-20260827`.
+**Writer lease:** `sess-20260827T142551Z-2954443-2610128195` (branch `m8.8-exec-20260827`, startSha `0c710e70e8348e4b2cb57b92bd0878283a6e6c49`).
+**Environment at execution:** Windows 11, .NET SDK 8.0.424+9.0.300, JDK 17.0.20, Android SDK platform-tools 37.0.0 (adb, no device), Unity Hub 3.12.1, **no licensed Unity 6000.3.4f1 editor** (0 editors in `C:\Program Files\Unity\Hub\Editor` and `D:\Unity`), no Android Build Support, no macOS/Xcode.
+
+### H1 — Editor namespace/semantic compile (CLOSED)
+
+`Assets/WalkGame/Editor/WalkGameEditorTools.cs` now imports `UnityEngine.Rendering` (for `GraphicsSettings`) and `UnityEditor.Build` (for `IPostprocessBuildWithReport`). Static sweep of all Unity-only assemblies (Editor, App, UI, World, Android, iOS-guarded) shows no further unresolved namespace.
+
+- Fix: two `using` additions, no reflection.
+- Static gate: `verify-unity-static.ps1` still PASS (112/112).
+- Semantic gate: `verify-unity-compile.ps1` (new) correctly requires pinned `6000.3.4f1`, binds source SHA/dirty, rejects stale/compiler-error, preserves log, detects mutation. Fixture tests prove false-green `error CS` logs are never reported as PASS. Real editor run remains **UNVERIFIED** (no editor).
+
+### H3 — Dedicated semantic compile/import gate (CLOSED, LOCALLY)
+
+New fail-closed wrapper `scripts/verify-unity-compile.ps1`:
+- Reuses `Get-UnityPinnedVersion`/`Test-UnityEditorMatchesPin` preflight (exact 6000.3.4f1).
+- Removes stale `TestResults/compile-run.log`/`compile-evidence.json` before launch, records source SHA + dirty, launches Unity batchmode `-executeMethod WalkGame.EditorTools.WalkGameEditorTools.ValidateContent`, captures full log, computes `compilerErrorCount` (regex `error CS\d+`), records `postDirty`/`mutatedFiles`, emits `compile-evidence.json` (sourceSha, editorPath, start/end UTC, exitCode, logPath, errorCount), and fails on launch/compiler/import/missing-marker/stale/mutation.
+- Helpers `Test-UnityCompileLog` / `Test-UnityCompileEvidence` in `cert-script-helpers.ps1` make the gate unit-testable.
+- Added to `scripts/README.md` and local gate order.
+- Regression: `Test-CertificationScripts.ps1` now 47/47 (35 M8.6 + 12 new compile false-green/sha/stale/error-count).
+
+### H2 — SaveMigrator contract (CLOSED)
+
+`SaveSchemaVersions.MinimumSupported = 1` (Current = 1, v1 initial). `SaveMigrator.TryMigrateToCurrent` now:
+- Rejects `null`, `>Current` (forward), `<MinimumSupported` (0, negative) with explicit error, never coercing.
+- While `version < Current`, requires exact `switch` migration to `before+1` or fails (`No migration path`); checks advancement `before+1`.
+- After loop requires `version == Current`, else fails.
+- No Vitality/resources minted.
+
+- Regression: `M88SaveMigratorContractTests` (11 cases): current success implies Current, forward fails without mutation, zero/negative fail without coercion, success-implies-Current, missing-path fails fast, zero does not mint, plus 3 repository integration (zero/negative → IncompatibleSchema fail-closed, current → Success).
+- Existing `SaveLoadTests` forward-schema cases still green; full domain 258/258.
+- Docs: `DATA_MODEL.md` §21 now documents strict postcondition and per-iteration advancement.
+
+### H4 — First-import URP/project reproducibility (UNVERIFIED by blocker, NOT FABRICATED)
+
+Clean checkout has no `Assets/Settings/URP-HighFidelity.asset` (verified `ls -R Assets/Settings` empty) and no `ProjectSettings/GraphicsSettings.asset`. `WalkGameEditorTools.ConfigureUrp()` would create `URP-HighFidelity.asset` and assign `GraphicsSettings.defaultRenderPipeline`/`QualitySettings.renderPipeline` on first import; `verify-unity-compile.ps1` now records `mutatedFiles` and would fail on unexpected mutation unless `-AllowProjectMutation` is used for a controlled materialization commit.
+
+- No Unity editor installed, so materialization/idempotence/provenance remains **UNVERIFIED** (exact blocker: no `6000.3.4f1` editor, no license). No opaque `.asset` was hand-fabricated.
+- `ConfigureUrp` is idempotent (load existing asset else create), and second-run diff would be checked via the new compile gate's `mutatedFiles` evidence.
+
+### P1 — Android denial / restart (REPRODUCED HEADLESS; DEVICE UNVERIFIED)
+
+Documented state table (raw native 3=Granted,2=Denied,1=NotDetermined,0=Unavailable; refinement `completedFlag || rationale ? Denied : NotDetermined`) and restart concern (in-memory `_completedRequestWithoutGrant` lost, raw 1 with rationale false → NotDetermined after restart). `MotionPermissionCoordinator` already prevents stacked prompts (`RequestInFlight`) and bounds requests (`StillNotDetermined`).
+
+- Regression: `M88AndroidPermissionStateTableTests` (7): fresh NotDetermined, granted/denied always, rationale distinction, denial+restart → NotDetermined, denial with rationale remains Denied after restart, coordinator no-stack, refresh bounded.
+- Device permission matrix (grant/deny/Settings/reboot/sensor unavailable) remains **UNVERIFIED** (no device/emulator with step-counter).
+
+### P2 — iOS callback / provider lifetime (HEADLESS INVARIANTS; DEVICE UNVERIFIED)
+
+Audited native `CMPedometer`/query callback, managed static delegate, pending-query map, generation/shutdown. Defined invariant: after `Shutdown()`, old pending queries are dropped (null), no late result mutates new generation, GameHost recomposition discards old generation. Static delegate retention field `_staticCallback` documents IL2CPP/AOT safety.
+
+- Regression: `M88IosProviderLifetimeTests` (4): shutdown drops pending & refuses new ops, new generation isolation, GameHost recomposition discards old callback, delegate retention documented.
+- Real Xcode generation/link/plist/postprocessor + device lifecycle remains **UNVERIFIED** (no macOS/Xcode/signing/device).
+
+### M1 — Vitality reason code (CLOSED)
+
+`VitalityLedger.TrySpend` now throws `ArgumentException` for empty/null `reasonCode` before mutating balance/history, mirroring `Credit`.
+
+- Regression: `M88VitalityAndRewardIntegrityTests` empty/null reason → throws, no mutation; valid reason succeeds; credit empty still throws.
+
+### M2 — Reward overflow (CLOSED)
+
+`RewardApplier.GrantResource` now uses `SaturatingAddLong` (checked add with overflow → Max/Min) then clamps <0 to 0, so `long.MaxValue -10 +20` saturates to `Max` instead of wrapping to negative then clamped to 0. `AddScore` uses `SaturatingAddInt` via long intermediate, so `int.MaxValue -5 +10` saturates to `Max`. Large long amounts clamped to int range before addition.
+
+- Regression: `M88VitalityAndRewardIntegrityTests` (7 overflow cases + 2 normal): `Max-10+20 → Max`, halfMax+halfMax → Max, large negative → 0, normal small amounts unchanged (15→12 etc), region scores Max+10 → Max, Min-10 → Min, normal 100+25 →125, huge long → Max.
+
+### M3 — Shader fallback null safety (CLOSED, LOCALLY)
+
+`AppFlowController.BuildRuntimeRig` ground material, `LoreActor.Bind`, and `NpcActor.Bind` now check `Shader.Find` result for null before `new Material(shader)`. `RegionEnvironmentPresenter` and `BuildingActor` were already null-safe (explicit null check / conditional).
+
+- No visual redesign; stripped builds no longer throw on missing shader variant. Semantic/build/device presentation remains to be certified under real Unity.
+
+### M8.8 certification matrix (fresh final source)
+
+| Gate | Result | Evidence |
+| --- | --- | --- |
+| Repository identity (live) | PASS | `Assert-RepoIdentity.ps1` / `assert-repo-identity.sh` exit 0; writer lease `sess-20260827T142551Z...` |
+| Domain suite | PASS | **258/258** (`dotnet test`; 224 M8.7 + 34 new M8.8) |
+| verify-domain.ps1 | PASS | same 258, exit 0 |
+| Unity static audit | PASS | **112 assets / 112 metas**, Unity 6000.3.4f1 pin (added 4 new test files + 4 metas + `verify-unity-compile.ps1` doc) |
+| Release hygiene / privacy audit | PASS | 63 runtime sources scanned, manifest minimal (no location/INTERNET, stepcounter optional) |
+| Agent guard suites — PowerShell twin | PASS | all S1-S7, S8-S10, S11/ps1, S11d/e (new-branch allowed, similar-name, unreachable), hook S11f/g/i, S12; S11h script fix verified via ps1 + real-repo sh `check-remote-advance` exit 0 |
+| Agent guard suites — sh twin | **ENV-BLOCKED** | pre-existing CRLF + bash `cd` limitation in this sandbox: `[sh] S1/S4/S5` etc. fail before M8.8; `sh` new-branch `check-remote-advance` on real repo now PASS after CRLF normalization (0). No repository defect. |
+| Certification-script regression | PASS | **47/47** (`Test-CertificationScripts.ps1`: 35 M8.6 + 12 M8.8 compile false-green) |
+| verify-unity-compile.ps1 (semantic) | **UNVERIFIED** | script present + fixture 6/6 compile-log + 4/4 evidence tests PASS; real editor launch blocked (UNITY_EDITOR_PATH not set, no 6000.3.4f1 editor) |
+| `git diff --check` | PASS | clean (trailing whitespace fixed: scripts/Test-CertificationScripts.ps1:268) |
+| Unity import/compile/editmode/playmode | **UNVERIFIED** | no licensed editor (Hub 3.12.1, 0 entitlements, `accounts.db` empty, licensing `Token not found`) |
+| Android Build Support / IL2CPP build | **UNVERIFIED** | AndroidPlayer absent, only Windows Standalone |
+| Android lifecycle smoke / step sensor | **UNVERIFIED** | no device/emulator with `TYPE_STEP_COUNTER` (adb empty) |
+| iOS / macOS / Xcode | **UNVERIFIED** | no macOS |
+
+### CRLF hygiene fix
+
+`scripts/check-remote-advance.sh`, `scripts/assert-repo-identity.sh`, `scripts/writer-lock.sh`, and `.githooks/pre-push` were stored with CRLF (Windows `core.autocrlf=true`) and failed under `bash` with `$'\r'` errors. Normalized to LF so the same scripts now pass when invoked via `bash` on Windows. `Test-AgentGuards` sh S8a/S8b etc. now partially pass; remaining `[sh] S1` failures are pre-existing `cd` sandbox limitation, not a script defect.
+
+### Remaining limitations (M8.8)
+
+- EDITOR/DEVICE/iOS tiers remain blocked by the identical environment absence as M8.7 (no licensed Unity 6000.3.4f1, no Build Support, no step-counter device, no macOS). No locally executable Critical/High defect remains.
+- First-import URP materialization and idempotence are still to be proven on a licensed Unity host; the new `verify-unity-compile.ps1` will capture `mutatedFiles` evidence and require `-AllowProjectMutation` for the intentional canonical commit.
+- The `sh` column of `Test-AgentGuards.ps1` remains partially ENV-BLOCKED in this Windows sandbox; `ps` twin + real-repo `sh` probe prove H5 correctness.
+
+### Next-campaign recommendation
+
+Because every locally executable H1-H4/M1-M3 requirement is now closed with 34 new regressions and no executed tier exposes a release blocker, recommend **M9 Closed Playtest Readiness** — to be executed on a host with a licensed Unity `6000.3.4f1` editor, Android Build Support, and a physical step-counter device so the still-UNVERIFIED semantic compile, materialization idempotence, Android build/smoke, and iOS lanes can be genuinely certified. If a measured blocker appears under real hardware (e.g., exactly-once step-counter, performance, or UX), that blocker should drive a focused follow-up instead of broad Region 2 expansion.

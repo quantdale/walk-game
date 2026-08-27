@@ -73,6 +73,11 @@ namespace WalkGame.Core
                 throw new ArgumentOutOfRangeException(nameof(spend), "Spend amount must be positive.");
             }
 
+            if (string.IsNullOrEmpty(spend.reasonCode))
+            {
+                throw new ArgumentException("A spend requires a reason code.", nameof(spend));
+            }
+
             if (_profile.vitalityBalance < spend.amount)
             {
                 _log.Debug($"Vitality spend rejected: need {spend.amount}, have {_profile.vitalityBalance}.");

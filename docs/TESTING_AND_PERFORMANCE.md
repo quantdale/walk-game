@@ -14,9 +14,9 @@ Testing must therefore prioritize:
 
 ## 1A. Current campaign evidence
 
-As of 2026-08-27 (M8.7 canonical-state & certification-integrity closure, ADR 0007 amendment; M8.6 harness preserved), `dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj`
-passes **224/224** (213 baseline + 11 new M8.7 canonical-state regressions in `M87SaveIntegrityClosureTests`) and `scripts/verify-unity-static.ps1` passes the pinned Unity version,
-asset metadata, package invariants, and Bootstrap scene checks (108 assets/108 metas — added `M87SaveIntegrityClosureTests.cs` + meta).
+As of 2026-08-27 (M8.8 pre-playtest integrity & Unity bring-up closure, ADR 0007 amendment preserved; M8.7/M8.6 harness preserved), `dotnet test verification/WalkGame.Domain.Tests/WalkGame.Domain.Tests.csproj`
+passes **258/258** (224 M8.7 + 34 new M8.8: 11 SaveMigrator contract in `M88SaveMigratorContractTests`, 12 Vitality/reward overflow & reason-code in `M88VitalityAndRewardIntegrityTests`, 7 Android permission table & restart in `M88AndroidPermissionStateTableTests`, 4 iOS provider lifetime in `M88IosProviderLifetimeTests`) and `scripts/verify-unity-static.ps1` passes the pinned Unity version,
+asset metadata, package invariants, and Bootstrap scene checks (112 assets/112 metas — added 4 new test files + 4 metas).
 `scripts/verify-release-hygiene.ps1` adds a CI-runnable privacy/release audit (no GPS/save-path
 logging, Log-wrapper enforcement, minimal manifest). Player-facing state is covered by
 `PlayerExperienceTests`, exactly-once by `ActivityServiceTests` + `InterruptedSessionRecoveryTests`
@@ -69,13 +69,23 @@ M8.7 closed the parseable-save structural-integrity family and the first-push lo
 - `SaveValidator` H1/H2/H3: null `RegionState` reconstruction/prune, `regionId` normalized to dictionary key, null `VitalityTransaction` prune (with `SaveValidationReport` counters); `WorldState.GetOrCreateRegionState` self-heals null values; `ProfileStateCopier` skips null history elements as a rollback-boundary defense. 11 focused regressions in `M87SaveIntegrityClosureTests` (H1 current/unreachable null, H2 key mismatch + no-split-identity, H3 prune + copier tolerance + failed-commit rollback, S8 round-trip/idempotence, H4 full structural matrix, S7 no-minting) plus the existing dirty-target/dedup tests. No Vitality is minted and no progression is fabricated; re-repair is idempotent.
 - H5 first-push guard: `pre-push`, `check-remote-advance.sh` and `Check-RemoteAdvance.ps1` now probe exact ref existence via `ls-remote` to distinguish absent branch (allow first push) from transport/auth failure (fail closed), while preserving ancestor/race, deletion, and no-force policy. `Test-AgentGuards.ps1` now covers first-push to absent branch, similar-name exact-ref, unreachable origin, and the existing contained/advanced/divergence cases (ps twin; sh twin environment-blocked in this sandbox, pre-existing, documented in IMPLEMENTATION_STATUS).
 
+### M8.8 pre-playtest integrity & Unity bring-up closure (AUTOMATED; EDITOR/DEVICE UNVERIFIED)
+
+M8.8 closed the remaining locally executable pre-playtest defects while leaving editor/device tiers at the same precise blocker:
+
+- **H1 Editor compile:** `WalkGameEditorTools.cs` now imports `UnityEngine.Rendering` and `UnityEditor.Build` so `GraphicsSettings` and `IPostprocessBuildWithReport` resolve; full Unity-only assembly sweep shows no further missing namespace. Proven via new fail-closed gate below, not via static text check.
+- **H3 Semantic compile gate:** new `scripts/verify-unity-compile.ps1` — exact `6000.3.4f1` preflight, fresh `TestResults/compile-run.log` + `compile-evidence.json` bound to source SHA/dirty, compiler-error detection (`error CS\d+`), completion-marker check, stale-evidence rejection, and `mutatedFiles` project-mutation detection (`-AllowProjectMutation` for intentional canonical materialization). Helpers `Test-UnityCompileLog`/`Test-UnityCompileEvidence` are engine-free and locked by `Test-CertificationScripts` 12 new cases (47/47 total).
+- **H2 Save migration:** `SaveSchemaVersions.MinimumSupported = 1`; `SaveMigrator.TryMigrateToCurrent` now guarantees `true ⇒ schemaVersion == Current`, rejects `<MinimumSupported` and `>Current`, requires each loop iteration to advance `before → before+1` or fail with `No migration path`, and never coerces. 11 new regressions in `M88SaveMigratorContractTests` plus repository integration (zero/negative → `IncompatibleSchema` fail-closed, current → `Success`). `DATA_MODEL.md` §21 documents the contract.
+- **H4 First-import URP:** verified clean checkout has no `Assets/Settings/URP-HighFidelity.asset`; `ConfigureUrp` is idempotent but without a licensed editor the materialization/idempotence/provenance remains **UNVERIFIED** (no hand-fabricated asset). The new compile gate's `mutatedFiles` evidence will bind the editor-generated canonical state when available.
+- **P1 Android permission restart:** state table (fresh/Granted/Denied/NotDetermined, rationale + `completedFlag`) and restart-loses-flag concern documented; `MotionPermissionCoordinator` already prevents stacked prompts and bounds requests; 7 new headless regressions in `M88AndroidPermissionStateTableTests` (including denial → restart → `NotDetermined` and `RequestInFlight` no-stack). Physical permission matrix remains **UNVERIFIED**.
+- **P2 iOS callback lifetime:** generation ownership, `Shutdown()` dropping pending queries, GameHost recomposition, and `CMPedometer` delegate retention audited; 4 headless regressions in `M88IosProviderLifetimeTests`. Real Xcode/build remains **UNVERIFIED**.
+- **CRLF hygiene:** `scripts/*.sh` and `.githooks/pre-push` normalized from CRLF to LF so `bash` on Windows no longer fails with `$'\r'`.
+
 Unity compile/EditMode/PlayMode, Android IL2CPP/ARM64 build, physical step-counter exactly-once,
 UX and performance/battery/thermal remain **UNVERIFIED** until a licensed editor and reference
 hardware are available.
 
 The procedural environment kit uses shared materials, property blocks for state tinting,
-static geometry after construction, reused UI rows, and `Physics.OverlapSphereNonAlloc`
-for Explore interaction scans. These are static mobile-readiness measures, not device
 performance measurements. Unity compile/EditMode/PlayMode and FPS, allocation, thermal,
 and battery measurements remain **UNVERIFIED** until a licensed editor and reference
 hardware are available.

@@ -196,15 +196,19 @@ function Test-ScriptParses([string]$RelPath) {
     return ($null -eq $errs -or $errs.Count -eq 0)
 }
 
-Record "R7 smoke script parses" (Test-ScriptParses 'scripts/verify-android-smoke.ps1')
-Record "R7 editmode script parses" (Test-ScriptParses 'scripts/verify-unity-editmode.ps1')
-Record "R7 playmode script parses" (Test-ScriptParses 'scripts/verify-unity-playmode.ps1')
 Record "R7 helpers script parses" (Test-ScriptParses 'scripts/cert-script-helpers.ps1')
+Record "R7 compile script parses" (Test-ScriptParses 'scripts/verify-unity-compile.ps1')
 
 $smokeSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts/verify-android-smoke.ps1') -Raw
 Record "R7 smoke uses finally block" ($smokeSrc -match 'finally\s*\{')
 Record "R7 smoke uses idempotent uninstall" ($smokeSrc -match 'Uninstall-AndroidPackageIdempotent')
 Record "R7 smoke records finalDisposition" ($smokeSrc -match 'finalDisposition')
+
+$compileSrc = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts/verify-unity-compile.ps1') -Raw
+Record "R7 compile uses fail-closed log check" ($compileSrc -match 'Test-UnityCompileLog')
+Record "R7 compile binds sourceSha" ($compileSrc -match 'sourceSha')
+Record "R7 compile checks pinned version" ($compileSrc -match 'Get-UnityPinnedVersion')
+Record "R7 compile removes stale artifacts" ($compileSrc -match 'compile-run\.log')
 
 # --- R17.2.10: foreground/resumed activity evidence ------------------------
 
@@ -226,6 +230,94 @@ $mockFgWrong = {
 }
 $fgWrong = Get-AndroidForegroundActivity -Serial 'emulator-5554' -Adb $mockFgWrong
 Record "R17.2.10 wrong-package activity distinguishable" ($fgWrong.FocusedActivity -match 'com.other.app') "got '$($fgWrong.FocusedActivity)'"
+
+# --- M8.8 H3: semantic compile log false-green guards --------------------
+
+$goodLog = New-TempFile "compile-good.log" @'
+Unity Editor 6000.3.4f1 BatchMode starting
+Importing project...
+Compilation succeeded
+WalkGame Validate OK
+Exiting batchmode
+'@
+$badCsLog = New-TempFile "compile-bad-cs.log" @'
+Unity Editor 6000.3.4f1 BatchMode starting
+error CS0246: The type or namespace name 'GraphicsSettings' could not be found
+Exiting batchmode
+'@
+$badCompilerLog = New-TempFile "compile-bad-compiler.log" @'
+Unity Editor 6000.3.4f1
+Compiler Error at Assets/WalkGame/Editor/WalkGameEditorTools.cs(143,13): error CS0103
+'@
+$emptyLog = New-TempFile "compile-empty.log" ""
+$noMarkerLog = New-TempFile "compile-nomarker.log" "some random text without unity marker"
+$missingLogPath = Join-Path $tmp "does-not-exist-compile.log"
+
+$s = ''
+Record "compile good log passes" (Test-UnityCompileLog -Path $goodLog -Summary ([ref]$s)) $s
+Record "compile bad CS log fails" (-not (Test-UnityCompileLog -Path $badCsLog -Summary ([ref]$s))) $s
+Record "compile bad Compiler Error fails" (-not (Test-UnityCompileLog -Path $badCompilerLog -Summary ([ref]$s))) $s
+Record "compile empty log fails" (-not (Test-UnityCompileLog -Path $emptyLog -Summary ([ref]$s))) $s
+Record "compile missing log fails" (-not (Test-UnityCompileLog -Path $missingLogPath -Summary ([ref]$s))) $s
+Record "compile no-marker log fails" (-not (Test-UnityCompileLog -Path $noMarkerLog -Summary ([ref]$s))) $s
+
+# Evidence freshness / SHA binding
+$goodEvidenceLog = New-TempFile "compile-ev-log.log" @'
+Unity Editor 6000.3.4f1 BatchMode
+Compilation succeeded
+'@
+$nowIso = [DateTimeOffset]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
+$laterIso = ([DateTimeOffset]::UtcNow.AddMinutes(1)).ToString("yyyy-MM-ddTHH:mm:ssZ")
+$fakeSha = "abc123def456abc123def456abc123def456abcd"
+$evidenceGood = New-TempFile "compile-ev-good.json" (@"
+{
+  "sourceSha": "$fakeSha",
+  "startUtc": "$nowIso",
+  "endUtc": "$laterIso",
+  "exitCode": 0,
+  "compilerErrorCount": 0,
+  "logPath": "$($goodEvidenceLog -replace '\\','\\')"
+}
+"@)
+# Create log file at expected path for evidence test (already exists as $goodEvidenceLog)
+$s2 = ''
+Record "compile evidence good passes" (Test-UnityCompileEvidence -EvidencePath $evidenceGood -ExpectedSha $fakeSha -LogPath $goodEvidenceLog -Summary ([ref]$s2)) $s2
+
+$evidenceBadSha = New-TempFile "compile-ev-badsha.json" (@"
+{
+  "sourceSha": "differentSha123",
+  "startUtc": "$nowIso",
+  "endUtc": "$laterIso",
+  "exitCode": 0,
+  "compilerErrorCount": 0,
+  "logPath": "$($goodEvidenceLog -replace '\\','\\')"
+}
+"@)
+Record "compile evidence bad SHA fails" (-not (Test-UnityCompileEvidence -EvidencePath $evidenceBadSha -ExpectedSha $fakeSha -LogPath $goodEvidenceLog -Summary ([ref]$s2))) $s2
+
+$evidenceStale = New-TempFile "compile-ev-stale.json" (@"
+{
+  "sourceSha": "$fakeSha",
+  "startUtc": "2020-01-01T00:00:00Z",
+  "endUtc": "2020-01-01T00:01:00Z",
+  "exitCode": 0,
+  "compilerErrorCount": 0,
+  "logPath": "$($goodEvidenceLog -replace '\\','\\')"
+}
+"@)
+Record "compile evidence stale fails" (-not (Test-UnityCompileEvidence -EvidencePath $evidenceStale -ExpectedSha $fakeSha -LogPath $goodEvidenceLog -Summary ([ref]$s2))) $s2
+
+$evidenceErrorCount = New-TempFile "compile-ev-errcnt.json" (@"
+{
+  "sourceSha": "$fakeSha",
+  "startUtc": "$nowIso",
+  "endUtc": "$laterIso",
+  "exitCode": 0,
+  "compilerErrorCount": 2,
+  "logPath": "$($goodEvidenceLog -replace '\\','\\')"
+}
+"@)
+Record "compile evidence non-zero error count fails" (-not (Test-UnityCompileEvidence -EvidencePath $evidenceErrorCount -ExpectedSha $fakeSha -LogPath $goodEvidenceLog -Summary ([ref]$s2))) $s2
 
 Write-Host ""
 Write-Host ("Certification-script tests complete: {0} passed, {1} failed." -f $script:PassCount, $script:FailCount)

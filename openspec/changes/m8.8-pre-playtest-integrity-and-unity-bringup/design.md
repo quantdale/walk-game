@@ -1,6 +1,6 @@
 # M8.8 Design — Pre-Playtest Integrity & Unity Bring-Up Closure
 
-Status: ACTIVE
+Status: COMPLETE
 Planned-From: main@cf260d04fefbb2d5e7da265de5ae03a9aa768a0a
 
 ## 1. Design principles

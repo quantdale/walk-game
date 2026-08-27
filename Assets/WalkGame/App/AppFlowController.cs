@@ -405,10 +405,13 @@ namespace WalkGame.App
             if (groundRenderer != null)
             {
                 var shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
-                groundRenderer.sharedMaterial = new Material(shader)
+                if (shader != null)
                 {
-                    color = new Color(0.18f, 0.19f, 0.19f),
-                };
+                    groundRenderer.sharedMaterial = new Material(shader)
+                    {
+                        color = new Color(0.18f, 0.19f, 0.19f),
+                    };
+                }
             }
 
             // Presenter root.

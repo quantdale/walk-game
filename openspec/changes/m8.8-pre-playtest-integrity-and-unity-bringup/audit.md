@@ -1,6 +1,6 @@
 # M8.8 Audit — Pre-Playtest Integrity & Unity Bring-Up Closure
 
-Status: ACTIVE planning package
+Status: COMPLETE planning package
 Planned-From: main@cf260d04fefbb2d5e7da265de5ae03a9aa768a0a
 Audit date: 2026-08-27
 Repository: quantdale/walk-game

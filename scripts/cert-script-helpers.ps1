@@ -264,3 +264,142 @@ function Get-FileSha256 {
     $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash
     return $hash.ToLowerInvariant()
 }
+
+# Semantic compile/import log validation (M8.8 H3). Fail-closed: a Unity log
+# that contains a compiler error must never be reported as PASS, even if the
+# Unity process exit code is ambiguous/zero.
+function Test-UnityCompileLog {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [ref]$Summary
+    )
+    if (-not (Test-Path -LiteralPath $Path)) {
+        if ($Summary) { $Summary.Value = 'compile log missing' }
+        return $false
+    }
+    $content = $null
+    try { $content = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop } catch {
+        if ($Summary) { $Summary.Value = 'compile log unreadable' }
+        return $false
+    }
+    if ([string]::IsNullOrWhiteSpace($content)) {
+        if ($Summary) { $Summary.Value = 'compile log empty' }
+        return $false
+    }
+    # Compiler error patterns (C#). Case-insensitive.
+    $errorPatterns = @(
+        'error CS\d+',
+        'Compiler Error',
+        'Failed to compile',
+        '\[Error\].*error CS',
+        'error:.*CS\d+'
+    )
+    foreach ($pat in $errorPatterns) {
+        if ($content -match $pat) {
+            if ($Summary) { $Summary.Value = "compiler error detected ($pat)" }
+            return $false
+        }
+    }
+    # Require evidence that Unity actually ran an import/compile cycle.
+    # Real Unity logs contain at least one of these markers. Fixture logs
+    # for unit tests should include one marker to be considered valid.
+    $completionMarkers = @(
+        'Unity Editor',
+        'BatchMode',
+        'Exiting batchmode',
+        'Finished',
+        'Compilation succeeded',
+        'WalkGame',
+        'import.*complete',
+        'Validate.*OK'
+    )
+    $hasMarker = $false
+    foreach ($m in $completionMarkers) {
+        if ($content -match $m) { $hasMarker = $true; break }
+    }
+    if (-not $hasMarker) {
+        if ($Summary) { $Summary.Value = 'compile log missing completion marker' }
+        return $false
+    }
+    if ($Summary) { $Summary.Value = 'compile log clean' }
+    return $true
+}
+
+# Validate machine-readable compile evidence freshness and binding to source.
+function Test-UnityCompileEvidence {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$EvidencePath,
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedSha,
+        [Parameter(Mandatory = $true)]
+        [string]$LogPath,
+        [ref]$Summary
+    )
+    if (-not (Test-Path -LiteralPath $EvidencePath)) {
+        if ($Summary) { $Summary.Value = 'compile evidence missing' }
+        return $false
+    }
+    $json = $null
+    try { $json = Get-Content -LiteralPath $EvidencePath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop } catch {
+        if ($Summary) { $Summary.Value = 'compile evidence unreadable/malformed' }
+        return $false
+    }
+    if (-not $json.sourceSha -or $json.sourceSha -ne $ExpectedSha) {
+        if ($Summary) { $Summary.Value = "evidence sourceSha mismatch (expected $ExpectedSha, got $($json.sourceSha))" }
+        return $false
+    }
+    if (-not $json.logPath -or $json.logPath -ne $LogPath) {
+        # Allow absolute/relative variance but require file existence check separately.
+    }
+    if (-not (Test-Path -LiteralPath $LogPath)) {
+        if ($Summary) { $Summary.Value = 'referenced log missing' }
+        return $false
+    }
+    # Stale evidence: log must be newer than evidence start or at least exist now.
+    # Evidence must have been produced in this run (startUtc recent).
+    if (-not $json.startUtc -or -not $json.endUtc) {
+        if ($Summary) { $Summary.Value = 'evidence missing timestamps' }
+        return $false
+    }
+    try {
+        $start = [DateTimeOffset]::Parse($json.startUtc)
+        $end = [DateTimeOffset]::Parse($json.endUtc)
+        if ($end -lt $start) {
+            if ($Summary) { $Summary.Value = 'evidence end before start' }
+            return $false
+        }
+        # Evidence older than 24h is considered stale for certification.
+        $age = [DateTimeOffset]::UtcNow - $end
+        if ($age.TotalHours -gt 24) {
+            if ($Summary) { $Summary.Value = 'evidence stale (>24h)' }
+            return $false
+        }
+    } catch {
+        if ($Summary) { $Summary.Value = 'evidence timestamp parse failed' }
+        return $false
+    }
+    if ($null -eq $json.exitCode) {
+        if ($Summary) { $Summary.Value = 'evidence missing exitCode' }
+        return $false
+    }
+    if ($json.exitCode -ne 0) {
+        if ($Summary) { $Summary.Value = "Unity exit $($json.exitCode)" }
+        return $false
+    }
+    if ($null -ne $json.compilerErrorCount -and $json.compilerErrorCount -ne 0) {
+        if ($Summary) { $Summary.Value = "compilerErrorCount $($json.compilerErrorCount) non-zero" }
+        return $false
+    }
+    # Log itself must still be clean (defense in depth).
+    $logSummary = ''
+    if (-not (Test-UnityCompileLog -Path $LogPath -Summary ([ref]$logSummary))) {
+        if ($Summary) { $Summary.Value = "log check failed: $logSummary" }
+        return $false
+    }
+    if ($Summary) { $Summary.Value = 'compile evidence valid' }
+    return $true
+}

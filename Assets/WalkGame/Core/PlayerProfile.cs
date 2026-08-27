@@ -34,6 +34,8 @@ namespace WalkGame.Core
     {
         /// <summary>Current save schema. Any breaking change must bump this and add a migration.</summary>
         public const int Current = 1;
+        /// <summary>Minimum supported schema. Material below this version fails closed without coercion.</summary>
+        public const int MinimumSupported = 1;
     }
 
     public sealed class WorldState

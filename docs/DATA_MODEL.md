@@ -352,7 +352,14 @@ a failed write reverts the canonical graph in place to exact disk truth.
 
 Every persisted model change that breaks compatibility must increment `schemaVersion`.
 
-Example:
+M8.8 schema truth (Current = 1, MinimumSupported = 1 — v1 is the initial real schema):
+- `SaveMigrator.TryMigrateToCurrent == true` implies `profile.schemaVersion == SaveSchemaVersions.Current`.
+- A profile with `schemaVersion < MinimumSupported` (including 0 and negative) fails closed with an explicit unsupported-schema error; it is never coerced to Current by assigning the version field.
+- A profile with `schemaVersion > Current` fails closed as forward-schema evidence.
+- Every migration loop iteration must match one exact source version, deterministically transform only that version, and increment to exactly `before + 1`; a missing case, unchanged version, backward jump, or skip fails deterministically rather than break-and-succeed or loop forever. After the loop the profile must equal Current.
+- No migration silently mints Vitality, completes projects, or awards milestones.
+
+Example future evolution:
 
 ```text
 v1 → v2: add communityScore = 0
@@ -361,7 +368,6 @@ v3 → v4: rename region ID through explicit map
 ```
 
 Never rely on default deserializer behavior for destructive schema changes.
-
 ## 22. Content versioning
 
 Save schema and content version are different concerns.
